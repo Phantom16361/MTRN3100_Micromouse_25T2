@@ -1,35 +1,37 @@
-
 #include <Arduino.h>
 #include "pin_config.hpp"
 #include "robot_param.hpp"
 #include "EncoderOdometry.hpp"
 #include "MotorController.hpp"
 #include "PIDController.hpp"
+#include "CubicTrajectory.hpp"
 
 EncoderOdometry odom(WHEEL_RADIUS_MM, AXLE_LENGTH_MM, TICKS_PER_REV);
 MotorController motor;
 
-PIDController leftPID(1.55, 0.0, 0.02);   // Tweak gains
-PIDController rightPID(1.59, 0.0, 0.01);
+PIDController positionPID(LEFT_POS_KP, LEFT_POS_KI, LEFT_POS_KD);  // Tune these
+
+CubicTrajectory traj;
 
 unsigned long lastControlTime = 0;
 const unsigned long CONTROL_INTERVAL_MS = 25;
 
-float targetSpeedSet = 100.0;
-
-float targetSpeedL = 0.0;
-float targetSpeedR = 0.0;
+float duration = 0.6;   // seconds
+unsigned long startTime = 0;
+bool reachedTarget = false;
 
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println("Looping Step Input PID Test");
+  Serial.println("Direct Position PID Test (with Position Error Stop)");
 
   odom.begin();
   motor.begin();
 
-  leftPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
-  rightPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
+  traj.generate(0, 0, 200.0, 0, duration); // Move forward 120mm
+
+  positionPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
+  startTime = millis();
 }
 
 void loop() {
@@ -37,35 +39,29 @@ void loop() {
 
   unsigned long now = millis();
   if (now - lastControlTime >= CONTROL_INTERVAL_MS) {
-    float dt = (now - lastControlTime) / 2000.0;
+    float dt = (now - lastControlTime) / 1000.0;
     lastControlTime = now;
 
-    // 6s ON (100 mm/s), 6s OFF (0 mm/s) loop
-    if ((now / 1000) % 8 < 4) {
-      targetSpeedL = targetSpeedR = targetSpeedSet;
-    } else {
-      targetSpeedL = targetSpeedR = 0;
+    float currentTime = (now - startTime) / 1000.0;
+    float x = odom.getX();
+    float x_des = traj.getPosition(min(currentTime, duration));  // Clamp time to duration
+    float error = x_des - x;
+
+    if (!reachedTarget) {
+      float pwm = positionPID.compute(error, dt, x);
+      motor.setMotorPWM(pwm, pwm);
+
+      if (currentTime > duration && abs(error) < 1.5) {
+        reachedTarget = true;
+        motor.setMotorPWM(0, 0);
+        Serial.println("✔ Reached Target Position");
+      }
+
+      Serial.print("T:"); Serial.print(currentTime, 2); Serial.print(" ");
+      Serial.print("X_DES:"); Serial.print(x_des, 1); Serial.print(" ");
+      Serial.print("X:"); Serial.print(x, 1); Serial.print(" ");
+      Serial.print("ERR:"); Serial.print(error, 1); Serial.print(" ");
+      Serial.print("PWM:"); Serial.println(pwm, 1);
     }
-
-    float leftVel = odom.getLeftSpeedMMs();
-    float rightVel = odom.getRightSpeedMMs();
-
-    float leftError = targetSpeedL - leftVel;
-    float rightError = targetSpeedR - rightVel;
-
-    float leftPWM = leftPID.compute(leftError, dt);
-    float rightPWM = rightPID.compute(rightError, dt);
-
-    motor.setMotorPWM(leftPWM, rightPWM);
-
-    // Serial Plotter Output
-    Serial.print("L_SP:");      Serial.print(targetSpeedL, 2);  Serial.print(" ");
-    Serial.print("L_VEL:");     Serial.print(leftVel, 2);       Serial.print(" ");
-    Serial.print("L_OUT:");     Serial.print(leftPWM, 2);       Serial.print(" ");
-    Serial.print("R_SP:");      Serial.print(targetSpeedR, 2);  Serial.print(" ");
-    Serial.print("R_VEL:");     Serial.print(rightVel, 2);      Serial.print(" ");
-    Serial.print("R_OUT:");     Serial.print(rightPWM, 2);      Serial.print(" ");
-    Serial.print("REF_Bottom:"); Serial.print(-50);            Serial.print(" ");
-    Serial.print("REF_Top:");    Serial.println(120);
   }
 }

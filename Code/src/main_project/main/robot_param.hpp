@@ -27,12 +27,23 @@
 
 
 // ========== Velocity PID Values ==========
-#define LEFT_VEL_KP  2.0
-#define LEFT_VEL_KI  0.0
-#define LEFT_VEL_KD  0.1
+#define LEFT_VEL_KP  1.85
+#define LEFT_VEL_KI  0.28
+#define LEFT_VEL_KD  0.025
 
-#define RIGHT_VEL_KP 2.2
-#define RIGHT_VEL_KI 0.0
-#define RIGHT_VEL_KD 0.1
+#define RIGHT_VEL_KP 1.85
+#define RIGHT_VEL_KI 0.28
+#define RIGHT_VEL_KD 0.02
+
+// ========== Position PID Values ==========
+#define LEFT_POS_KP 1.10
+#define LEFT_POS_KI 0.30
+#define LEFT_POS_KD 0.05
+
+#define RIGHT_POS_KP 1.10
+#define RIGHT_POS_KI 0.30
+#define RIGHT_POS_KD 0.05
+
+
 
 #endif // ROBOT_PARAM_HPP
