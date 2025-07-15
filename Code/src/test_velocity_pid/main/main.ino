@@ -1,100 +1,71 @@
+
 #include <Arduino.h>
 #include "pin_config.hpp"
 #include "robot_param.hpp"
-#include "MotorController.hpp"
 #include "EncoderOdometry.hpp"
+#include "MotorController.hpp"
+#include "PIDController.hpp"
 
-#include <Adafruit_SSD1306.h>
-#include <Adafruit_GFX.h>
-
-#define SCREEN_WIDTH  OLED_WIDTH
-#define SCREEN_HEIGHT OLED_HEIGHT
-
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-MotorController motor;
 EncoderOdometry odom(WHEEL_RADIUS_MM, AXLE_LENGTH_MM, TICKS_PER_REV);
+MotorController motor;
 
-int cycleCount = 0;
+PIDController leftPID(1.55, 0.0, 0.02);   // Tweak gains
+PIDController rightPID(1.59, 0.0, 0.01);
+
+unsigned long lastControlTime = 0;
+const unsigned long CONTROL_INTERVAL_MS = 25;
+
+float targetSpeedSet = 100.0;
+
+float targetSpeedL = 0.0;
+float targetSpeedR = 0.0;
 
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println("Motor + Odometry OLED Test Starting...");
+  Serial.println("Looping Step Input PID Test");
 
-  motor.begin();
   odom.begin();
+  motor.begin();
 
-  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
-    Serial.println("OLED init failed");
-    while (true);
-  }
-
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 0);
-  display.println("OLED + Motor Ready");
-  display.display();
-}
-
-void printToOLED(const char* label, int leftPWM, int rightPWM) {
-  display.clearDisplay();
-  display.setCursor(0, 0);
-
-  // Top: status and PWM
-  display.print(label); display.print(" | L:");
-  display.print(leftPWM); display.print(" R:");
-  display.println(rightPWM);
-
-  // Middle: position (X, Y, θ)
-  display.print("X: "); display.print(odom.getX(), 0); display.print("mm ");
-  display.print("Y: "); display.print(odom.getY(), 0); display.println("mm");
-  display.print("Th: "); display.print(odom.getTheta(), 2); display.println("rad");
-
-  // Bottom: ticks
-  display.print("L:"); display.print(odom.getLeftTicks());
-  display.print(" R:"); display.print(odom.getRightTicks());
-
-  display.display();
+  leftPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
+  rightPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
 }
 
 void loop() {
   odom.update();
-  ++cycleCount;
 
-  // Drive forward
-  Serial.println("Forward");
-  motor.setMotorPWM(150, 150);
-  for (int i = 0; i < 10; ++i) {
-    odom.update();
-    printToOLED("FWD", 150, 150);
-    delay(100);
-  }
+  unsigned long now = millis();
+  if (now - lastControlTime >= CONTROL_INTERVAL_MS) {
+    float dt = (now - lastControlTime) / 2000.0;
+    lastControlTime = now;
 
-  // Stop
-  Serial.println("Stop");
-  motor.setMotorPWM(0, 0);
-  for (int i = 0; i < 10; ++i) {
-    odom.update();
-    printToOLED("STOP", 0, 0);
-    delay(100);
-  }
+    // 6s ON (100 mm/s), 6s OFF (0 mm/s) loop
+    if ((now / 1000) % 8 < 4) {
+      targetSpeedL = targetSpeedR = targetSpeedSet;
+    } else {
+      targetSpeedL = targetSpeedR = 0;
+    }
 
-  // Drive backward
-  Serial.println("Backward");
-  motor.setMotorPWM(-150, -150);
-  for (int i = 0; i < 10; ++i) {
-    odom.update();
-    printToOLED("REV", -150, -150);
-    delay(100);
-  }
+    float leftVel = odom.getLeftSpeedMMs();
+    float rightVel = odom.getRightSpeedMMs();
 
-  // Stop again
-  Serial.println("Stop");
-  motor.setMotorPWM(0, 0);
-  for (int i = 0; i < 10; ++i) {
-    odom.update();
-    printToOLED("STOP", 0, 0);
-    delay(100);
+    float leftError = targetSpeedL - leftVel;
+    float rightError = targetSpeedR - rightVel;
+
+    float leftPWM = leftPID.compute(leftError, dt);
+    float rightPWM = rightPID.compute(rightError, dt);
+
+    motor.setMotorPWM(leftPWM, rightPWM);
+
+    // Serial Plotter Output
+    Serial.print("L_SP:");      Serial.print(targetSpeedL, 2);  Serial.print(" ");
+    Serial.print("L_VEL:");     Serial.print(leftVel, 2);       Serial.print(" ");
+    Serial.print("L_OUT:");     Serial.print(leftPWM, 2);       Serial.print(" ");
+    Serial.print("R_SP:");      Serial.print(targetSpeedR, 2);  Serial.print(" ");
+    Serial.print("R_VEL:");     Serial.print(rightVel, 2);      Serial.print(" ");
+    Serial.print("R_OUT:");     Serial.print(rightPWM, 2);      Serial.print(" ");
+    Serial.print("REF_Bottom:"); Serial.print(-50);            Serial.print(" ");
+    Serial.print("REF_Top:");    Serial.println(120);
   }
 }

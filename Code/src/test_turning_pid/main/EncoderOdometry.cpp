@@ -74,20 +74,41 @@ long EncoderOdometry::getLeftTicks() const { return leftTicks; }
 long EncoderOdometry::getRightTicks() const { return rightTicks; }
 
 float EncoderOdometry::getLeftSpeedMMs() const {
-    long leftNow = leftTicks;
-    long deltaTicks = leftNow - prevLeftTicks;
+    static unsigned long lastTime = 0;
+    static long lastTicks = 0;
+
     unsigned long now = millis();
-    float dt = (now - lastUpdateTime) / 1000.0;
-    return (deltaTicks * mmPerTick) / dt;
+    float dt = (now - lastTime) / 1000.0;
+
+    if (dt <= 0.0) return 0.0;
+
+    long currentTicks = leftTicks;
+    float speed = (currentTicks - lastTicks) * mmPerTick / dt;
+
+    lastTicks = currentTicks;
+    lastTime = now;
+
+    return speed;
 }
 
 float EncoderOdometry::getRightSpeedMMs() const {
-    long rightNow = rightTicks;
-    long deltaTicks = rightNow - prevRightTicks;
+    static unsigned long lastTime = 0;
+    static long lastTicks = 0;
+
     unsigned long now = millis();
-    float dt = (now - lastUpdateTime) / 1000.0;
-    return (deltaTicks * mmPerTick) / dt;
+    float dt = (now - lastTime) / 1000.0;
+
+    if (dt <= 0.0) return 0.0;
+
+    long currentTicks = rightTicks;
+    float speed = (currentTicks - lastTicks) * mmPerTick / dt;
+
+    lastTicks = currentTicks;
+    lastTime = now;
+
+    return speed;
 }
+
 
 void EncoderOdometry::handleLeftA() {
     if (digitalRead(ENC1_B))
