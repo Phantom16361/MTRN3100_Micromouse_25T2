@@ -1,40 +1,30 @@
 # MTRN3100-Micromouse
 Repository for 2025T2 MTRN3100 Micro Mouse project
 
+/src          
+  ├── EncoderOdometry.hpp/cpp      # Stage 1
+  ├── MotorController.hpp/cpp      # Stage 2
+  ├── PIDController.hpp/cpp        # Stage 3 & 4
+  ├── IMUManager.hpp/cpp           # Stage 5
+  ├── LidarManager.hpp/cpp         # Stage 6
+  ├── MotionPlanner.hpp/cpp        # Stage 7+
+  ├── StateMachine.hpp/cpp         # Stage 7+
+  └── utils.hpp/cpp (optional)     # For math helpers, filters, conversions, etc.
 
-All pinouts should follow:
+  /main_project/
+    └── main.ino     <-- production maze navigation logic  # Entry point: sets up loop, state machine
 
-#include "Wire.h"
+  /test_velocity_pid/
+    └── main.ino     <-- just runs velocity PID in loop
 
+  /test_position_pid/
+    └── main.ino     <-- drives forward set distance, logs PID loop
 
-// We are using DRV8835 DC motor driver
-#define MOT1PWM  11
-#define MOT1DIR 12
-#define MOT2PWM 9
-#define MOT2DIR 10
+  /test_turning_pid/
+    └── main.ino     <-- runs IMU yaw PID and logs angle
 
+  /test_wall_follow/
+    └── main.ino     <-- uses lidar PID only
 
-// DC motor encoders
-#define ENC_1_A 2 //These are the pins for the PCB encoder for motor 1
-#define ENC_1_B 7 //These are the pins for the PCB encoder for motor 1
-#define ENC_2_A 3 //These are the pins for the PCB encoder for motor 2
-#define ENC_2_B 8 //These are the pins for the PCB encoder for motor 2
-
-
-// I2C for IMU
-MPU6050 mpu(Wire);
-
-
-// SSD1306 OLED display on I2C (default address 0x3C)
-
-
-// VL6180X TOF ditance sensor (default address 0X29, can use .setAddress function to reassign)
-VL6180X sensor1;   //Left lidar
-VL6180X sensor2;   //Front lidar
-VL6180X sensor3;   //Right lidar
-int sensor1_pin = A0; // ENABLE PIN FOR SENSOR 1
-int sensor2_pin = A1; // ENABLE PIN FOR SENSOR 2
-int sensor2_pin = A2; // ENABLE PIN FOR SENSOR 2
-
-
-// Arduino NANO I2C pins are A4 (SDA) and A5 (SCL)
+/shared
+  └── pin_config.hpp  <-- hardware mappings and defines
