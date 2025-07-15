@@ -21,24 +21,29 @@ Repository for 2025T2 MTRN3100 Micro Mouse project
 
 
   /main_project/
+  
     └── main.ino     <-- production maze navigation logic  # Entry point: sets up loop, state machine
 
 
   /test_velocity_pid/
+  
     └── main.ino     <-- just runs velocity PID in loop
 
 
   /test_position_pid/
+  
     └── main.ino     <-- drives forward set distance, logs PID loop
 
 
   /test_turning_pid/
+  
     └── main.ino     <-- runs IMU yaw PID and logs angle
 
 
   /test_wall_follow/
+  
     └── main.ino     <-- uses lidar PID only
 
 
 /shared
-  └── pin_config.hpp  <-- hardware mappings and defines
+    └── pin_config.hpp  <-- hardware mappings and defines
