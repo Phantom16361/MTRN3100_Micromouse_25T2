@@ -52,15 +52,22 @@ void loop() {
   // Start of OLED print
   display.clearDisplay();
   display.setCursor(0, 0);
+
+  // Position
   display.print("X: ");
   display.print(odom.getX(), 0);
   display.print("mm\nY: ");
   display.print(odom.getY(), 0);
   display.print("mm\nTh: ");
   display.print(odom.getTheta(), 2);
-  display.print(" rad");
-  display.display();
-  // End of OLED print
+  display.print("rad");
 
-  delay(100);
+  // Pulses
+  display.setCursor(0, 40);  // Move down screen
+  display.print("L: ");
+  display.print(odom.getLeftTicks());
+  display.print("  R: ");
+  display.print(odom.getRightTicks());
+
+  display.display();
 }
