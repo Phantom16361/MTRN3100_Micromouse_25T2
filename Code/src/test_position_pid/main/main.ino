@@ -6,7 +6,7 @@
 #include "PIDController.hpp"
 #include "CubicTrajectory.hpp"
 
-EncoderOdometry odom(WHEEL_RADIUS_MM, AXLE_LENGTH_MM, TICKS_PER_REV);
+EncoderOdometry odom;
 MotorController motor;
 
 PIDController positionPID(LEFT_POS_KP, LEFT_POS_KI, LEFT_POS_KD);  // Tune these

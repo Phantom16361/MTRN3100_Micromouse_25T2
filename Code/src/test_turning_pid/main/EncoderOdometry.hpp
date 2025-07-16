@@ -1,17 +1,16 @@
-#ifndef ENCODER_ODOMETRY_HPP
-#define ENCODER_ODOMETRY_HPP
+#pragma once
 
-#include <Arduino.h>
-#include "pin_config.hpp"
+#include "Arduino.h"
 #include "robot_param.hpp"
+#include "pin_config.hpp"
 
 class EncoderOdometry {
 public:
-    EncoderOdometry(float wheelRadiusMM, float axleLengthMM, int ticksPerRevolution);
+    EncoderOdometry();
 
     void begin();
-    void update();
     void reset();
+    void update();
 
     float getX() const;
     float getY() const;
@@ -23,23 +22,19 @@ public:
     long getLeftTicks() const;
     long getRightTicks() const;
 
+    static void handleLeftA();
+    static void handleRightA();
+
 private:
-    float radius;
-    float axleLength;
-    int ticksPerRev;
-    float mmPerTick;
+    float x = 0.0f;
+    float y = 0.0f;
+    float theta = 0.0f;
 
-    float x, y, theta;
+    long prevLeftTicks = 0;
+    long prevRightTicks = 0;
 
-    long prevLeftTicks;
-    long prevRightTicks;
-    unsigned long lastUpdateTime;
+    unsigned long lastUpdateTime = 0;
 
     static volatile long leftTicks;
     static volatile long rightTicks;
-
-    static void handleLeftA();
-    static void handleRightA();
 };
-
-#endif // ENCODER_ODOMETRY_HPP
