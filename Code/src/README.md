@@ -6,7 +6,8 @@ It is _**VERY**_ important to keep track of which version of a document we are u
 
 For files with "Do not edit unless discussed" in the header, it is not a good idea to introduce any change to them unless you know exactly what you are trying to do and you are sure it will not mess with other's code.
 
-`Example:
+Example:
+```
 /**************************************************************
  *  File         : CubicTrajectory.cpp
  *  Author       : Jason E Tomczyk
@@ -21,4 +22,5 @@ For files with "Do not edit unless discussed" in the header, it is not a good id
  *  Changelog:
  *    - [v1.0] Implemented cubic coefficient solver and accessors
  *             for position, velocity, and acceleration profiles.
- *************************************************************/`
+ *************************************************************/
+```
