@@ -1,3 +1,23 @@
+/**************************************************************
+ *  File         : main.ino
+ *  Author       : Jason E Tomczyk
+ *  Description  : Basic odometry test for encoders. Initializes
+ *                 motor and odometry subsystems, approximates
+ *                 current robot position and atitude based on encoder counts
+ *                 relative to the initial start location.
+ *                 Prints the referance frame coordinates to OLED.
+ * 
+ *  Version      : 1.0
+ *  Created On   : 2025-07-16
+ *  Last Updated : 2025-07-16
+ * 
+ *  Changelog:
+ *    - [v1.0] Validated motor/encoder interaction in isolation.
+ *             Prepared straight-line test suitable for Week 4
+ *             barebones demonstration.
+ *************************************************************/
+
+
 #include <Arduino.h>
 #include "pin_config.hpp"
 #include "robot_param.hpp"
