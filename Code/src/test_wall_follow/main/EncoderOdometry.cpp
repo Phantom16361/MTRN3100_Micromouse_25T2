@@ -1,18 +1,10 @@
 #include "EncoderOdometry.hpp"
 
+
 volatile long EncoderOdometry::leftTicks = 0;
 volatile long EncoderOdometry::rightTicks = 0;
 
-EncoderOdometry::EncoderOdometry(float wheelRadiusMM, float axleLengthMM, int ticksPerRevolution)
-    : radius(wheelRadiusMM),
-      axleLength(axleLengthMM),
-      ticksPerRev(ticksPerRevolution),
-      x(0.0), y(0.0), theta(0.0),
-      prevLeftTicks(0), prevRightTicks(0),
-      lastUpdateTime(0)
-{
-    mmPerTick = (2.0 * 3.14159 * radius) / ticksPerRev;
-}
+EncoderOdometry::EncoderOdometry() {}
 
 void EncoderOdometry::begin() {
     pinMode(ENC1_A, INPUT);
@@ -32,9 +24,9 @@ void EncoderOdometry::reset() {
     rightTicks = 0;
     interrupts();
 
-    x = 0;
-    y = 0;
-    theta = 0;
+    x = 0.0f;
+    y = 0.0f;
+    theta = 0.0f;
     prevLeftTicks = 0;
     prevRightTicks = 0;
     lastUpdateTime = millis();
@@ -53,13 +45,16 @@ void EncoderOdometry::update() {
     prevLeftTicks = left;
     prevRightTicks = right;
 
-    float dL_mm = dLeft * mmPerTick;
-    float dR_mm = dRight * mmPerTick;
+    float dL_mm = dLeft * MM_PER_TICK;
+    float dR_mm = dRight * MM_PER_TICK;
 
-    float dCenter = (dL_mm + dR_mm) / 2.0;
-    float dTheta = (dR_mm - dL_mm) / axleLength;
+    float dCenter = (dL_mm + dR_mm) / 2.0f;
+    float dTheta  = (dR_mm - dL_mm) / AXLE_LENGTH_MM;
 
     theta += dTheta;
+    if (theta > PI)        theta -= TWO_PI;
+    else if (theta <= -PI) theta += TWO_PI;
+
     x += dCenter * cos(theta);
     y += dCenter * sin(theta);
 
@@ -78,12 +73,12 @@ float EncoderOdometry::getLeftSpeedMMs() const {
     static long lastTicks = 0;
 
     unsigned long now = millis();
-    float dt = (now - lastTime) / 1000.0;
+    float dt = (now - lastTime) / 1000.0f;
 
-    if (dt <= 0.0) return 0.0;
+    if (dt <= 0.0f) return 0.0f;
 
     long currentTicks = leftTicks;
-    float speed = (currentTicks - lastTicks) * mmPerTick / dt;
+    float speed = (currentTicks - lastTicks) * MM_PER_TICK / dt;
 
     lastTicks = currentTicks;
     lastTime = now;
@@ -96,19 +91,18 @@ float EncoderOdometry::getRightSpeedMMs() const {
     static long lastTicks = 0;
 
     unsigned long now = millis();
-    float dt = (now - lastTime) / 1000.0;
+    float dt = (now - lastTime) / 1000.0f;
 
-    if (dt <= 0.0) return 0.0;
+    if (dt <= 0.0f) return 0.0f;
 
     long currentTicks = rightTicks;
-    float speed = (currentTicks - lastTicks) * mmPerTick / dt;
+    float speed = (currentTicks - lastTicks) * MM_PER_TICK / dt;
 
     lastTicks = currentTicks;
     lastTime = now;
 
     return speed;
 }
-
 
 void EncoderOdometry::handleLeftA() {
     if (digitalRead(ENC1_B))
