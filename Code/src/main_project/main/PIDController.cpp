@@ -1,3 +1,20 @@
+/**************************************************************
+ *  File         : PIDController.cpp
+ *  Author       : Jason E Tomczyk
+ *  Description  : General-purpose velocity PID controller with
+ *                 support for deadband, derivative-on-measurement,
+ *                 smoothing filter (EMA), and wheel-specific
+ *                 factory constructors.
+ * 
+ *  Version      : 1.0
+ *  Created On   : 2025-07-16
+ *  Last Updated : 2025-07-16
+ * 
+ *  Changelog:
+ *    - [v1.0] Implemented PID with static Left/Right factory
+ *             methods using constants from robot_param.hpp.
+ *************************************************************/
+
 #include "PIDController.hpp"
 #include <Arduino.h>
 

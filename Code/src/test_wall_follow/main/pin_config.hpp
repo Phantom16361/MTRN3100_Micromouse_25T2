@@ -1,3 +1,19 @@
+/**************************************************************
+ *  File         : pin_config.hpp
+ *  Author       : Jason E Tomczyk
+ *  Description  : Centralized pin definitions for Micromouse hardware.
+ *                 Maps symbolic names to physical GPIO pins for motors,
+ *                 encoders, sensors, and display.
+ * 
+ *  Version      : 1.0
+ *  Created On   : 2025-07-16
+ *  Last Updated : 2025-07-16
+ * 
+ *  Changelog:
+ *    - [v1.0] Declared symbolic macros for all relevant hardware pins
+ *             including encoder channels and motor driver signals.
+ *************************************************************/
+
 #ifndef PIN_CONFIG_HPP
 #define PIN_CONFIG_HPP
 

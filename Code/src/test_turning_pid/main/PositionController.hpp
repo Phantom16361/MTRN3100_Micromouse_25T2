@@ -1,3 +1,19 @@
+/**************************************************************
+ *  File         : PositionController.hpp
+ *  Author       : Jason E Tomczyk
+ *  Description  : Declaration of a simple PID-style position controller
+ *                 for 1D straight-line motion. Used for trajectory tracking
+ *                 or distance-based alignment.
+ * 
+ *  Version      : 1.0
+ *  Created On   : 2025-07-16
+ *  Last Updated : 2025-07-16
+ * 
+ *  Changelog:
+ *    - [v1.0] Initial implementation of PID-style position control class
+ *             with setTarget, update, reset, and tolerance detection.
+ *************************************************************/
+
 #pragma once
 
 /**

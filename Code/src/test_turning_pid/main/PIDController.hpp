@@ -1,5 +1,21 @@
-#pragma once
+/**************************************************************
+ *  File         : PIDController.hpp
+ *  Author       : Jason E Tomczyk
+ *  Description  : Header for velocity PID controller module.
+ *                 Includes factory methods for left/right wheels,
+ *                 and interface for error-based or measurement-
+ *                 based derivative logic.
+ * 
+ *  Version      : 1.0
+ *  Created On   : 2025-07-16
+ *  Last Updated : 2025-07-16
+ * 
+ *  Changelog:
+ *    - [v1.0] Added configurable PID with velocity deadband,
+ *             smoothing filter, and static instantiation.
+ *************************************************************/
 
+#pragma once
 #include "robot_param.hpp"
 
 /**

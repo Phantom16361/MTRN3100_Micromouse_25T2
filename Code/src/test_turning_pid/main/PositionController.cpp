@@ -1,3 +1,18 @@
+/**************************************************************
+ *  File         : PositionController.cpp
+ *  Author       : Jason E Tomczyk
+ *  Description  : Implementation of a simple position PID controller
+ *                 using a fixed target and tunable gains. Intended for
+ *                 forward driving or wall-distance setpoint tracking.
+ * 
+ *  Version      : 1.0
+ *  Created On   : 2025-07-16
+ *  Last Updated : 2025-07-16
+ * 
+ *  Changelog:
+ *    - [v1.0] Initial control structure and error-tolerant stop logic.
+ *************************************************************/
+
 #include "PositionController.hpp"
 #include <Arduino.h>
 
