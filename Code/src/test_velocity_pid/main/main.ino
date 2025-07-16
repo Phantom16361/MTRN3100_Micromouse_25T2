@@ -1,3 +1,20 @@
+/**************************************************************
+ *  File         : main.ino
+ *  Author       : Jason E Tomczyk
+ *  Description  : Velocity PID test harness for verifying wheel
+ *                 speed response. Logs target vs actual velocity,
+ *                 applies factory-initialized PID outputs to motors.
+ * 
+ *  Version      : 1.0
+ *  Created On   : 2025-07-16
+ *  Last Updated : 2025-07-16
+ * 
+ *  Changelog:
+ *    - [v1.0] Initial straight-line velocity tracking test using
+ *             PIDController::Left/Right and EncoderOdometry feedback.
+ *************************************************************/
+
+
 #include <Arduino.h>
 #include "EncoderOdometry.hpp"
 #include "MotorController.hpp"
