@@ -1,13 +1,28 @@
-
-#include <Arduino.h>
 #include "PIDController.hpp"
+#include <Arduino.h>
 
 PIDController::PIDController(float kp, float ki, float kd)
-    : Kp(kp), Ki(ki), Kd(kd),
-      integral(0), previousError(0),
-      outputMin(-255), outputMax(255),
-      filteredDerivative(0), alpha(0.1f),
-      lastMeasurement(0.0f) {}
+    : Kp(kp), Ki(ki), Kd(kd) {}
+
+PIDController PIDController::Left() {
+    PIDController pid(LEFT_VEL_KP, LEFT_VEL_KI, LEFT_VEL_KD);
+    pid.setOutputLimits(PID_OUTPUT_MIN, PID_OUTPUT_MAX);
+    pid.setDerivativeSmoothing(PID_DERIV_SMOOTH);
+    pid.setVelocityDeadband(PID_DEADBAND);
+    pid.enableDerivativeFreezeOnZeroSP(true);
+    pid.setUseDerivativeOnMeasurement(true);
+    return pid;
+}
+
+PIDController PIDController::Right() {
+    PIDController pid(RIGHT_VEL_KP, RIGHT_VEL_KI, RIGHT_VEL_KD);
+    pid.setOutputLimits(PID_OUTPUT_MIN, PID_OUTPUT_MAX);
+    pid.setDerivativeSmoothing(PID_DERIV_SMOOTH);
+    pid.setVelocityDeadband(PID_DEADBAND);
+    pid.enableDerivativeFreezeOnZeroSP(true);
+    pid.setUseDerivativeOnMeasurement(true);
+    return pid;
+}
 
 void PIDController::setGains(float kp, float ki, float kd) {
     Kp = kp; Ki = ki; Kd = kd;
@@ -29,10 +44,6 @@ void PIDController::reset() {
     lastMeasurement = 0;
 }
 
-void PIDController::setTargetSetpoint(float sp) {
-    lastTargetSetpoint = sp;
-}
-
 void PIDController::enableDerivativeFreezeOnZeroSP(bool enable) {
     freezeDWhenSPZero = enable;
 }
@@ -45,21 +56,26 @@ void PIDController::setUseDerivativeOnMeasurement(bool enable) {
     useDerivativeOnMeasurement = enable;
 }
 
-float PIDController::compute(float error, float dt, float measurement) {
-    if (dt <= 0.0f) return 0;
+void PIDController::setTargetSetpoint(float sp) {
+    lastTargetSetpoint = sp;
+}
+
+// @param CONTROL_DT = time delta in seconds
+float PIDController::compute(float error, float measurement) {
+    if (CONTROL_DT <= 0.0f) return 0;
 
     if (abs(error) < deadband) {
-        error = 0.0;
+        error = 0.0f;
     }
 
-    integral += error * dt;
+    integral += error * CONTROL_DT;
 
     float rawDerivative;
     if (useDerivativeOnMeasurement) {
-        rawDerivative = (measurement - lastMeasurement) / dt;
+        rawDerivative = (measurement - lastMeasurement) / CONTROL_DT;
         lastMeasurement = measurement;
     } else {
-        rawDerivative = (error - previousError) / dt;
+        rawDerivative = (error - previousError) / CONTROL_DT;
         previousError = error;
     }
 

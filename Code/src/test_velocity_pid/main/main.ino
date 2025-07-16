@@ -1,96 +1,72 @@
-
 #include <Arduino.h>
-#include "pin_config.hpp"
-#include "robot_param.hpp"
 #include "EncoderOdometry.hpp"
 #include "MotorController.hpp"
 #include "PIDController.hpp"
 
-EncoderOdometry odom(WHEEL_RADIUS_MM, AXLE_LENGTH_MM, TICKS_PER_REV);
+// ─────────────────────────────────────────────
+// Global instances
+// ─────────────────────────────────────────────
+
+EncoderOdometry odom;
 MotorController motor;
 
-PIDController leftPID(1.85, 0.28, 0.025);
-PIDController rightPID(1.85, 0.28, 0.02);
+PIDController leftPID  = PIDController::Left();
+PIDController rightPID = PIDController::Right();
+
+// ─────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────
+
+float targetSpeedL = 0.0f;
+float targetSpeedR = 0.0f;
 
 unsigned long lastControlTime = 0;
-const unsigned long CONTROL_INTERVAL_MS = 25;
 
-float targetSpeedSet = 200.0;
-float targetSpeedL = 0.0;
-float targetSpeedR = 0.0;
+// ─────────────────────────────────────────────
+// Arduino setup()
+// ─────────────────────────────────────────────
 
 void setup() {
   Serial.begin(115200);
-  delay(300);
-  Serial.println("Looping Step Input PID Tuner");
 
   odom.begin();
   motor.begin();
 
-  leftPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
-  rightPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
-
-  leftPID.setDerivativeSmoothing(0.1);
-  rightPID.setDerivativeSmoothing(0.1);
-
-  leftPID.setUseDerivativeOnMeasurement(true);
-  rightPID.setUseDerivativeOnMeasurement(true);
-
-  leftPID.enableDerivativeFreezeOnZeroSP(true);
-  rightPID.enableDerivativeFreezeOnZeroSP(true);
-
-  leftPID.setVelocityDeadband(0.1);
-  rightPID.setVelocityDeadband(0.1);
+  // Set test target speeds (adjust as needed)
+  targetSpeedL = 100.0f;  // mm/s
+  targetSpeedR = 100.0f;
 }
 
-void loop() {
-  odom.update();
-  unsigned long now = millis();
+// ─────────────────────────────────────────────
+// Arduino loop()
+// ─────────────────────────────────────────────
 
+void loop() {
+  unsigned long now = millis();
   if (now - lastControlTime >= CONTROL_INTERVAL_MS) {
-    float dt = (now - lastControlTime) / 1000.0;
     lastControlTime = now;
 
-    // 4s ON, 4s OFF step pattern
-    if ((now / 1000) % 8 < 4) {
-      targetSpeedL = targetSpeedSet;
-      targetSpeedR = targetSpeedSet;
-    } else {
-      targetSpeedL = 0.0;
-      targetSpeedR = 0.0;
-    }
+    odom.update();
 
-    float leftVel = odom.getLeftSpeedMMs();
-    float rightVel = odom.getRightSpeedMMs();
+    float actualL = odom.getLeftSpeedMMs();
+    float actualR = odom.getRightSpeedMMs();
 
-    float errorL = targetSpeedL - leftVel;
-    float errorR = targetSpeedR - rightVel;
+    float errorL = targetSpeedL - actualL;
+    float errorR = targetSpeedR - actualR;
 
-    leftPID.setTargetSetpoint(targetSpeedL);
-    rightPID.setTargetSetpoint(targetSpeedR);
+    float pwmL = leftPID.compute(errorL, actualL);
+    float pwmR = rightPID.compute(errorR, actualR);
 
-    float leftPWM = leftPID.compute(errorL, dt, leftVel);
-    float rightPWM = rightPID.compute(errorR, dt, rightVel);
+    motor.setMotorPWM(pwmL, pwmR);
 
-    if (targetSpeedL == 0 && abs(leftVel) < 1.0) {
-      leftPID.reset();
-      leftPWM = 0;
-    }
-
-    if (targetSpeedR == 0 && abs(rightVel) < 1.0) {
-      rightPID.reset();
-      rightPWM = 0;
-    }
-
-    motor.setMotorPWM(leftPWM, rightPWM);
-
+    // Debug
     // Serial plotter output
-    Serial.print("L_SP:"); Serial.print(targetSpeedL, 2); Serial.print(" ");
-    Serial.print("L_VEL:"); Serial.print(leftVel, 2); Serial.print(" ");
-    Serial.print("L_OUT:"); Serial.print(leftPWM, 2); Serial.print(" ");
-    Serial.print("R_SP:"); Serial.print(targetSpeedR, 2); Serial.print(" ");
-    Serial.print("R_VEL:"); Serial.print(rightVel, 2); Serial.print(" ");
-    Serial.print("R_OUT:"); Serial.print(rightPWM, 2); Serial.print(" ");
+    Serial.print("Target_L:"); Serial.print(targetSpeedL, 2); Serial.print(" ");
+    Serial.print("Speed_L:"); Serial.print(actualL, 2); Serial.print(" ");
+    Serial.print("PWM_L:"); Serial.print(pwmL, 2); Serial.print(" ");
+    Serial.print("Target_R:"); Serial.print(targetSpeedR, 2); Serial.print(" ");
+    Serial.print("Speed_R:"); Serial.print(actualR, 2); Serial.print(" ");
+    Serial.print("PWM_R:"); Serial.print(pwmR, 2); Serial.print(" ");
     Serial.print("REF_Bottom:-100 "); Serial.println("REF_Top:250");
   }
 }

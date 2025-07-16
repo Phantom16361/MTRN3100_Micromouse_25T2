@@ -6,7 +6,7 @@
 #include "MotorController.hpp"
 #include "PIDController.hpp"
 
-EncoderOdometry odom(WHEEL_RADIUS_MM, AXLE_LENGTH_MM, TICKS_PER_REV);
+EncoderOdometry odom;
 MotorController motor;
 
 PIDController leftPID(1.55, 0.0, 0.02);   // Tweak gains
