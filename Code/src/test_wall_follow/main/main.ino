@@ -41,14 +41,5 @@ void loop() {
 
     motor.setMotorPWM(output, output);
 
-    // Serial Plotter Output
-    Serial.print("L_SP:");      Serial.print(targetSpeedL, 2);  Serial.print(" ");
-    Serial.print("L_VEL:");     Serial.print(leftVel, 2);       Serial.print(" ");
-    Serial.print("L_OUT:");     Serial.print(leftPWM, 2);       Serial.print(" ");
-    Serial.print("R_SP:");      Serial.print(targetSpeedR, 2);  Serial.print(" ");
-    Serial.print("R_VEL:");     Serial.print(rightVel, 2);      Serial.print(" ");
-    Serial.print("R_OUT:");     Serial.print(rightPWM, 2);      Serial.print(" ");
-    Serial.print("REF_Bottom:"); Serial.print(-50);            Serial.print(" ");
-    Serial.print("REF_Top:");    Serial.println(120);
   }
 }
