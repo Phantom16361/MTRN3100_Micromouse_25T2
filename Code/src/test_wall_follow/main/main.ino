@@ -1,35 +1,30 @@
-
 #include <Arduino.h>
 #include "pin_config.hpp"
 #include "robot_param.hpp"
 #include "EncoderOdometry.hpp"
 #include "MotorController.hpp"
-#include "PIDController.hpp"
+#include "PositionController.hpp"
 
-EncoderOdometry odom(WHEEL_RADIUS_MM, AXLE_LENGTH_MM, TICKS_PER_REV);
+EncoderOdometry odom;
 MotorController motor;
 
-PIDController leftPID(1.55, 0.0, 0.02);   // Tweak gains
-PIDController rightPID(1.59, 0.0, 0.01);
+PositionController position(LEFT_POS_KP, LEFT_POS_KI, LEFT_POS_KD);   // Tweak gains
+
 
 unsigned long lastControlTime = 0;
 const unsigned long CONTROL_INTERVAL_MS = 25;
 
-float targetSpeedSet = 100.0;
-
-float targetSpeedL = 0.0;
-float targetSpeedR = 0.0;
+float targetPositionSet = 100.0;
 
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println("Looping Step Input PID Test");
+  Serial.println("Wall follow");
 
   odom.begin();
   motor.begin();
+  position.setTarget(targetPositionSet);
 
-  leftPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
-  rightPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
 }
 
 void loop() {
@@ -40,23 +35,11 @@ void loop() {
     float dt = (now - lastControlTime) / 2000.0;
     lastControlTime = now;
 
-    // 6s ON (100 mm/s), 6s OFF (0 mm/s) loop
-    if ((now / 1000) % 8 < 4) {
-      targetSpeedL = targetSpeedR = targetSpeedSet;
-    } else {
-      targetSpeedL = targetSpeedR = 0;
-    }
+    float x = odom.getX();
+    
+    int output = static_cast<int>(position.update(x, dt));
 
-    float leftVel = odom.getLeftSpeedMMs();
-    float rightVel = odom.getRightSpeedMMs();
-
-    float leftError = targetSpeedL - leftVel;
-    float rightError = targetSpeedR - rightVel;
-
-    float leftPWM = leftPID.compute(leftError, dt);
-    float rightPWM = rightPID.compute(rightError, dt);
-
-    motor.setMotorPWM(leftPWM, rightPWM);
+    motor.setMotorPWM(output, output);
 
     // Serial Plotter Output
     Serial.print("L_SP:");      Serial.print(targetSpeedL, 2);  Serial.print(" ");
