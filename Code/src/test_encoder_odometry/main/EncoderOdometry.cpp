@@ -1,3 +1,21 @@
+/**************************************************************
+ *  File         : EncoderOdometry.cpp
+ *  Author       : Jason E Tomczyk
+ *  Description  : Computes differential-drive odometry using
+ *                 encoder interrupts. Tracks x, y, heading (θ),
+ *                 and optionally velocity of each wheel.
+ * 
+ *                 Do not edit unless discussed.
+ * 
+ *  Version      : 1.0
+ *  Created On   : 2025-07-16
+ *  Last Updated : 2025-07-16
+ * 
+ *  Changelog:
+ *    - [v1.0] Finalized full pose estimation from quadrature
+ *             encoder tick deltas. Includes heading wrap.
+ *************************************************************/
+
 #include "EncoderOdometry.hpp"
 
 

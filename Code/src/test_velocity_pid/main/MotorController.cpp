@@ -1,3 +1,20 @@
+/**************************************************************
+ *  File         : MotorController.cpp
+ *  Author       : Jason E Tomczyk
+ *  Description  : Low-level PWM and direction output control
+ *                 for DRV8835 motor driver. Used to command
+ *                 left/right motors directly.
+ * 
+ *                 Do not edit unless discussed.
+ * 
+ *  Version      : 1.0
+ *  Created On   : 2025-07-16
+ *  Last Updated : 2025-07-16
+ * 
+ *  Changelog:
+ *    - [v1.0] Finalized basic control structure for left/right
+ *             motors with PWM and direction settings.
+ *************************************************************/
 
 #include "MotorController.hpp"
 
