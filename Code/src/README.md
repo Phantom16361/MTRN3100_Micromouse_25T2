@@ -17,7 +17,7 @@ Example:
  * 
  *  Version      : 1.0
  *  Created On   : 2025-07-16
- *  Last Updated : 2025-07-16
+ *  Last Updated : 2025-07-16 (By Jason)
  * 
  *  Changelog:
  *    - [v1.0] Implemented cubic coefficient solver and accessors
