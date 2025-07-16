@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../../.."
+		},
+		{
+			"name": "MTRN3100_Micormouse_25T2",
+			"path": "../../../../../../../PlatformIO/Projects/MTRN3100_Micormouse_25T2"
+		}
+	],
+	"settings": {}
+}
