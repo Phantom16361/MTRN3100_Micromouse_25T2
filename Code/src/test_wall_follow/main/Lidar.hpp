@@ -11,9 +11,9 @@ enum LidarPosition {
     RIGHT = 2
 };
 
-class LidarModule {
+class Lidar {
 public:
-    LidarModule();
+    Lidar();
     void begin();
     int readDistance(LidarPosition pos);  // returns distance in mm
 

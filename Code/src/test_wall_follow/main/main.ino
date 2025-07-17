@@ -4,16 +4,13 @@
 #include "EncoderOdometry.hpp"
 #include "MotorController.hpp"
 #include "PositionController.hpp"
+#include "Lidar.hpp"
 
-EncoderOdometry odom;
 MotorController motor;
+Lidar lidar;
 
 PositionController position(LEFT_POS_KP, LEFT_POS_KI, LEFT_POS_KD);   // Tweak gains
-
-
 unsigned long lastControlTime = 0;
-const unsigned long CONTROL_INTERVAL_MS = 25;
-
 float targetPositionSet = 100.0;
 
 void setup() {
@@ -21,21 +18,22 @@ void setup() {
   delay(300);
   Serial.println("Wall follow");
 
-  odom.begin();
   motor.begin();
+  lidar.begin();
   position.setTarget(targetPositionSet);
 
 }
 
 void loop() {
-  odom.update();
-
   unsigned long now = millis();
   if (now - lastControlTime >= CONTROL_INTERVAL_MS) {
     float dt = (now - lastControlTime) / 2000.0;
     lastControlTime = now;
 
-    float x = odom.getX();
+    float x = lidar.readDistance(3);
+    Serial.print("Distance: ");
+    Serial.print(x);
+    Serial.println(" mm");
     
     int output = static_cast<int>(position.update(x, dt));
 
