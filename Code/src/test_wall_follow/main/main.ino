@@ -30,14 +30,14 @@ void loop() {
     float dt = (now - lastControlTime) / 2000.0;
     lastControlTime = now;
 
-    float x = lidar.readDistance(3);
+    float x = lidar.readDistance(1);
     Serial.print("Distance: ");
     Serial.print(x);
     Serial.println(" mm");
     
     int output = static_cast<int>(position.update(x, dt));
 
-    motor.setMotorPWM(output, output);
+    motor.setMotorPWM(-output, -output);
 
   }
 }

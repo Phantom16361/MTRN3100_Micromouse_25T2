@@ -5,46 +5,37 @@ Lidar::Lidar() {}
 void Lidar::begin() {
     Wire.begin();
 
-    // Setup enable pins and power down all sensors
-    for (int i = 0; i < 3; i++) {
+    // Setup enable pins and disable all sensors
+    for (int i = 0; i < 3; ++i) {
         pinMode(enablePins[i], OUTPUT);
-        digitalWrite(enablePins[i], LOW);
+        digitalWrite(enablePins[i], LOW);  // Ensure all sensors are off
     }
 
-    delay(100); // Ensure all sensors are off
+    delay(10);  // Small delay to ensure shutdown
 
-    // Power and initialize each sensor one at a time
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; ++i) {
         enableLidar(i);
-        delay(50); // Allow time for the sensor to boot
+        delay(50);  // Allow sensor to power up
 
         lidars[i].init();
         lidars[i].configureDefault();
-        lidars[i].setTimeout(500);
-        lidars[i].setAddress(addresses[i]); // Assign new unique address
-        disableAll(); // Turn off before moving to next
-    }
-
-    // Reactivate all sensors at their new addresses
-    for (int i = 0; i < 3; i++) {
-        digitalWrite(enablePins[i], HIGH);
-        delay(10);
+        lidars[i].setTimeout(250);
+        lidars[i].setAddress(addresses[i]);  // Assign unique I2C address
+        delay(10);  // Let I2C settle before next sensor is enabled
     }
 }
 
 int Lidar::readDistance(LidarPosition pos) {
-    if (pos < 0 || pos > 2) return -1;
+    if (pos < 0 || pos > 2) return -5;
     return lidars[pos].readRangeSingleMillimeters();
 }
 
 void Lidar::enableLidar(int index) {
-    disableAll();
     digitalWrite(enablePins[index], HIGH);
-    delay(10); // Wait for boot-up
 }
 
 void Lidar::disableAll() {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; ++i) {
         digitalWrite(enablePins[i], LOW);
     }
 }
