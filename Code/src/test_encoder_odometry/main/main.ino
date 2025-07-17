@@ -1,71 +1,93 @@
+/**************************************************************
+ *  File         : main.ino
+ *  Author       : Jason E Tomczyk
+ *  Description  : Basic odometry test for encoders. Initializes
+ *                 motor and odometry subsystems, approximates
+ *                 current robot position and atitude based on encoder counts
+ *                 relative to the initial start location.
+ *                 Prints the referance frame coordinates to OLED.
+ * 
+ *  Version      : 1.0
+ *  Created On   : 2025-07-16
+ *  Last Updated : 2025-07-16
+ * 
+ *  Changelog:
+ *    - [v1.0] Validated motor/encoder interaction in isolation.
+ *             Prepared straight-line test suitable for Week 4
+ *             barebones demonstration.
+ *************************************************************/
+
+
 #include <Arduino.h>
 #include "pin_config.hpp"
 #include "robot_param.hpp"
 #include "EncoderOdometry.hpp"
-#include "MotorController.hpp"
-#include "PIDController.hpp"
 
-EncoderOdometry odom(WHEEL_RADIUS_MM, AXLE_LENGTH_MM, TICKS_PER_REV);
-MotorController motor;
+#include "pin_config.hpp"
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_GFX.h>
 
-PIDController leftPID(1.55, 0.02, 0.01);   // Tweak gains
-PIDController rightPID(1.59, 0.00, 0.0);
+Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET);
 
-unsigned long lastControlTime = 0;
-const unsigned long CONTROL_INTERVAL_MS = 25;
-
-float targetSpeedSet = 100.0;
-
-float targetSpeedL = 0.0;
-float targetSpeedR = 0.0;
+EncoderOdometry odom;
 
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println("Looping Step Input PID Test");
-
+  Serial.println("Encoder Odometry Test Starting...");
   odom.begin();
-  motor.begin();
 
-  leftPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
-  rightPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
 
+  // Start of OLED Setup
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    Serial.println("OLED init failed");
+    while (true)
+      ;  // halt
+  }
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("Odometry OLED Ready");
+  display.display();
+  // End of OLED Setup
 }
 
 void loop() {
   odom.update();
 
-  unsigned long now = millis();
-  if (now - lastControlTime >= CONTROL_INTERVAL_MS) {
-    float dt = (now - lastControlTime) / 1000.0;
-    lastControlTime = now;
+  // Serial.print("Ticks L: ");
+  // Serial.print(odom.getLeftTicks());
+  // Serial.print(" | R: ");
+  // Serial.print(odom.getRightTicks());
+  // Serial.print(" || X: ");
+  // Serial.print(odom.getX(), 1);
+  // Serial.print(" mm | Y: ");
+  // Serial.print(odom.getY(), 1);
+  // Serial.print(" mm | θ: ");
+  // Serial.print(odom.getTheta(), 2);
+  // Serial.println(" rad");
 
-    // 6s ON (100 mm/s), 6s OFF (0 mm/s) loop
-    if ((now / 1000) % 8 < 4) {
-      targetSpeedL = targetSpeedR = targetSpeedSet;
-    } else {
-      targetSpeedL = targetSpeedR = 0;
-    }
+  // Start of OLED print
+  display.clearDisplay();
+  display.setCursor(0, 0);
 
-    float leftVel = odom.getLeftSpeedMMs();
-    float rightVel = odom.getRightSpeedMMs();
+  // Position
+  display.print("X: ");
+  display.print(odom.getX(), 0);
+  display.print("mm\nY: ");
+  display.print(odom.getY(), 0);
+  display.print("mm\nTh: ");
+  display.print(odom.getTheta(), 2);
+  display.print("rad");
 
-    float leftError = targetSpeedL - leftVel;
-    float rightError = targetSpeedR - rightVel;
+  // Pulses
+  display.setCursor(0, 40);  // Move down screen
+  display.print("L: ");
+  display.print(odom.getLeftTicks());
+  display.print("  R: ");
+  display.print(odom.getRightTicks());
 
-    float leftPWM = leftPID.compute(leftError, dt);
-    float rightPWM = rightPID.compute(rightError, dt);
-
-    motor.setMotorPWM(leftPWM, rightPWM);
-
-    // Serial Plotter Output
-    Serial.print("L_SP:");      Serial.print(targetSpeedL, 2);  Serial.print(" ");
-    Serial.print("L_VEL:");     Serial.print(leftVel, 2);       Serial.print(" ");
-    Serial.print("L_OUT:");     Serial.print(leftPWM, 2);       Serial.print(" ");
-    Serial.print("R_SP:");      Serial.print(targetSpeedR, 2);  Serial.print(" ");
-    Serial.print("R_VEL:");     Serial.print(rightVel, 2);      Serial.print(" ");
-    Serial.print("R_OUT:");     Serial.print(rightPWM, 2);      Serial.print(" ");
-    Serial.print("REF_Bottom:"); Serial.print(-50);            Serial.print(" ");
-    Serial.print("REF_Top:");    Serial.println(180);
-  }
+  display.display();
 }

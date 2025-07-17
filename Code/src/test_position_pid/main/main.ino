@@ -1,3 +1,23 @@
+/**************************************************************
+ *  File         : main.ino
+ *  Author       : Jason E Tomczyk
+ *  Description  : Runs a precomputed cubic trajectory over time
+ *                 and feeds it into a velocity PID loop. Intended
+ *                 to test trajectory smoothness and closed-loop
+ *                 performance under planned profiles.
+ * 
+ *                 Currently deprecated
+ * 
+ *  Version      : 1.0
+ *  Created On   : 2025-07-16
+ *  Last Updated : 2025-07-16
+ * 
+ *  Changelog:
+ *    - [v1.0] Sampled CubicTrajectory output and validated speed
+ *             convergence using odometry-based PID feedback.
+ *************************************************************/
+
+
 #include <Arduino.h>
 #include "pin_config.hpp"
 #include "robot_param.hpp"
@@ -6,7 +26,7 @@
 #include "PIDController.hpp"
 #include "CubicTrajectory.hpp"
 
-EncoderOdometry odom(WHEEL_RADIUS_MM, AXLE_LENGTH_MM, TICKS_PER_REV);
+EncoderOdometry odom;
 MotorController motor;
 
 PIDController positionPID(LEFT_POS_KP, LEFT_POS_KI, LEFT_POS_KD);  // Tune these

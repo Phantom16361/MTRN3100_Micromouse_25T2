@@ -9,8 +9,8 @@
 EncoderOdometry odom(WHEEL_RADIUS_MM, AXLE_LENGTH_MM, TICKS_PER_REV);
 MotorController motor;
 
-PIDController leftPID(1.85, 0.28, 0.025);
-PIDController rightPID(1.85, 0.28, 0.02);
+PIDController leftPID(LEFT_VEL_KP, LEFT_VEL_KI, LEFT_VEL_KD);
+PIDController rightPID(RIGHT_VEL_KP, RIGHT_VEL_KI, RIGHT_VEL_KD);
 
 unsigned long lastControlTime = 0;
 const unsigned long CONTROL_INTERVAL_MS = 25;

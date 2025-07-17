@@ -1,3 +1,19 @@
+/**************************************************************
+ *  File         : CubicTrajectory.cpp
+ *  Author       : Jason E Tomczyk
+ *  Description  : Generates cubic time-based trajectories for
+ *                 smooth motion planning from an initial state
+ *                 to a target state over a fixed duration.
+ * 
+ *  Version      : 1.0
+ *  Created On   : 2025-07-16
+ *  Last Updated : 2025-07-16
+ * 
+ *  Changelog:
+ *    - [v1.0] Implemented cubic coefficient solver and accessors
+ *             for position, velocity, and acceleration profiles.
+ *************************************************************/
+
 #include "CubicTrajectory.hpp"
 
 void CubicTrajectory::generate(float x0, float v0, float xf, float vf, float T) {
