@@ -25,7 +25,7 @@ const unsigned long IMU_MS = 10;
 float targetPositionSet = 100.0f;
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
   delay(200);
   Serial.println("Wall follow with yaw");
 
