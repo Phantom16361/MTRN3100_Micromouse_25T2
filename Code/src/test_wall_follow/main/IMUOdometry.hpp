@@ -2,34 +2,26 @@
 #define IMU_ODOMETRY_HPP
 
 #include <Arduino.h>
+#include <Wire.h>
+#include "MPU6050_light.hpp"
 
-namespace mtrn3100 {
-    class IMUOdometry {
-    public:
-        IMUOdometry() : x(0), y(0), vx(0), vy(0), lastUpdateTime(millis()) {}
+class IMUOdometry {
+public:
+    IMUOdometry();
 
-        void update(float accel_x, float accel_y) {
-            unsigned long currentTime = millis();
-            float dt = (currentTime - lastUpdateTime);  // Convert to seconds
-            lastUpdateTime = currentTime;
+    // Call in setup()
+    void begin(uint8_t gyroCfg = 1, uint8_t accCfg = 0);
 
-            // Integrate acceleration to get velocity
-            vx += accel_x * dt/1000;
-            vy += accel_y * dt/1000;
+    // Call each loop() to update yaw
+    void update();
 
-            // TODO: Integrate velocity to get position
-            x += 0;
-            y += 0;
-        }
+    // Yaw [deg] and [rad]
+    float getYawDegrees() const;
+    float getYawRadians() const;
 
-        float getX() const { return x; }
-        float getY() const { return y; }
-
-    private:
-        float x, y;
-        float vx, vy;
-        unsigned long lastUpdateTime;
-    };
-}
+private:
+    MPU6050 mpu;
+    float   yawDeg;
+};
 
 #endif // IMU_ODOMETRY_HPP
