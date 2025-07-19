@@ -1,13 +1,21 @@
+// PIDController.cpp
 
 #include <Arduino.h>
 #include "PIDController.hpp"
 
 PIDController::PIDController(float kp, float ki, float kd)
-    : Kp(kp), Ki(ki), Kd(kd),
-      integral(0), previousError(0),
-      outputMin(-255), outputMax(255),
-      filteredDerivative(0), alpha(0.1f),
-      lastMeasurement(0.0f) {}
+  : Kp(kp), Ki(ki), Kd(kd),
+    integral(0.0f),
+    previousError(0.0f),
+    filteredDerivative(0.0f),
+    outputMin(-255), outputMax(255),
+    alpha(0.1f),
+    lastTargetSetpoint(0.0f),
+    freezeDWhenSPZero(false),
+    deadband(0.0f),
+    useDerivativeOnMeasurement(false),
+    lastMeasurement(0.0f)
+{}
 
 void PIDController::setGains(float kp, float ki, float kd) {
     Kp = kp; Ki = ki; Kd = kd;
@@ -22,11 +30,11 @@ void PIDController::setDerivativeSmoothing(float smoothingAlpha) {
     alpha = constrain(smoothingAlpha, 0.0f, 1.0f);
 }
 
-void PIDController::reset() {
-    integral = 0;
-    previousError = 0;
-    filteredDerivative = 0;
-    lastMeasurement = 0;
+void PIDController::reset(float currentMeasurement) {
+    integral           = 0.0f;
+    previousError      = 0.0f;
+    filteredDerivative = 0.0f;
+    lastMeasurement    = currentMeasurement;
 }
 
 void PIDController::setTargetSetpoint(float sp) {
@@ -46,33 +54,30 @@ void PIDController::setUseDerivativeOnMeasurement(bool enable) {
 }
 
 float PIDController::compute(float error, float dt, float measurement) {
-    if (dt <= 0.0f) return 0;
+    if (dt <= 0.0f) return 0.0f;
 
-    if (abs(error) < deadband) {
-        error = 0.0;
+    if (fabs(error) < deadband) {
+        error = 0.0f;
     }
-
-    integral += error * dt;
 
     float rawDerivative;
     if (useDerivativeOnMeasurement) {
-        rawDerivative = (measurement - lastMeasurement) / dt;
+        rawDerivative   = (measurement - lastMeasurement) / dt;
         lastMeasurement = measurement;
     } else {
-        rawDerivative = (error - previousError) / dt;
-        previousError = error;
+        rawDerivative    = (error - previousError) / dt;
+        previousError    = error;
     }
 
-    if (freezeDWhenSPZero && abs(lastTargetSetpoint) < 1.0f) {
+    if (freezeDWhenSPZero && fabs(lastTargetSetpoint) < 1e-3f) {
         filteredDerivative = 0.0f;
     } else {
-        filteredDerivative = alpha * rawDerivative + (1.0f - alpha) * filteredDerivative;
+        filteredDerivative = alpha * rawDerivative
+                             + (1.0f - alpha) * filteredDerivative;
     }
 
-    float output = Kp * error + Ki * integral - Kd * filteredDerivative;
+    float output = Kp * error
+                 - Kd * filteredDerivative;
 
-    if (output > outputMax) output = outputMax;
-    else if (output < outputMin) output = outputMin;
-
-    return output;
+    return constrain(output, outputMin, outputMax);
 }

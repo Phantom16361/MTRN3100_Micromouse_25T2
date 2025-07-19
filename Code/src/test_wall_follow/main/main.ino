@@ -1,61 +1,113 @@
+// main.ino
+
 #include <Arduino.h>
 #include <Wire.h>
 
 #include "pin_config.hpp"
 #include "robot_param.hpp"
-#include "EncoderOdometry.hpp"
 #include "MotorController.hpp"
-#include "PositionController.hpp"
 #include "IMUOdometry.hpp"
+#include "PIDController.hpp"
 
-// ———— Objects ————
-EncoderOdometry    odom;
-MotorController    motor;
-PositionController position(LEFT_POS_KP, LEFT_POS_KI, LEFT_POS_KD);
-IMUOdometry        imu;
+// ———— States ————
+enum State { ROTATE, WAIT };
+State state = ROTATE;
 
-// ———— Timing ————
-unsigned long lastControlTime = 0;
-const unsigned long CONTROL_MS = 25;
+// ———— Hardware ————
+MotorController motor;
+IMUOdometry      imu;
 
-unsigned long lastImuTime = 0;
-const unsigned long IMU_MS = 10;
+// ———— PID (slower, gentler) ————
+PIDController yawPID(1.5f, 0.0f, 0.3f);
+const int       MAX_PWM       =  60;   // clamp PWM ±60
+const int       MIN_PWM_DEAD  =  15;   // dead‐zone
 
-// ———— Target ————
-float targetPositionSet = 100.0f;
+// ———— Parameters ————
+const float   TOL_DEG       =  5.0f;    // ±5° settle
+const float   DETECT_THRESH = 15.0f;    // manual twist >15°
+const unsigned long STABLE_MS = 200UL;  // must hold within tol 200 ms
+
+// ———— Yaw refs & timing ————
+float initialYaw, setpointYaw;
+unsigned long lastTime = 0, stableTime = 0;
+
+// wrap angle into [–180,180]
+static float wrap180(float a) {
+  while (a >  180.0f) a -= 360.0f;
+  while (a < -180.0f) a += 360.0f;
+  return a;
+}
 
 void setup() {
   Serial.begin(9600);
-  delay(200);
-  Serial.println("Wall follow with yaw");
+  while (!Serial);
+  Serial.println("=== Rotate → Twist → Return (loop) ===");
 
-  // IMU
-  imu.begin(/*gyroCfg=*/1, /*accCfg=*/0);
+  Wire.begin();
+  imu.begin(1,0);
+  delay(100);
+  imu.update();
 
-  // Robot
-  odom.begin();
   motor.begin();
-  position.setTarget(targetPositionSet);
+
+  initialYaw  = imu.getYawDegrees();
+  setpointYaw = wrap180(initialYaw + 90.0f);
+  Serial.print("Start yaw: "); Serial.println(initialYaw,1);
+  Serial.print("Target   : "); Serial.println(setpointYaw,1);
+
+  yawPID.setOutputLimits(-MAX_PWM, MAX_PWM);
+  yawPID.setDerivativeSmoothing(0.1f);
+  yawPID.setUseDerivativeOnMeasurement(true);
+  yawPID.reset(initialYaw);
+
+  lastTime   = millis();
+  stableTime = 0;
 }
 
 void loop() {
-  // 1) IMU yaw
-  imu.update();
-  if (millis() - lastImuTime >= IMU_MS) {
-    Serial.print("Yaw (°): ");
-    Serial.println(imu.getYawDegrees(), 1);
-    lastImuTime = millis();
-  }
-
-  // 2) Wall-follow every CONTROL_MS
-  odom.update();
   unsigned long now = millis();
-  if (now - lastControlTime >= CONTROL_MS) {
-    float dt = (now - lastControlTime) / 1000.0f;
-    lastControlTime = now;
+  float dt = (now - lastTime) * 0.001f;
+  lastTime = now;
 
-    float x = odom.getX();
-    int output = static_cast<int>(position.update(x, dt));
-    motor.setMotorPWM(output, output);
+  imu.update();
+  float rawYaw = imu.getYawDegrees();
+  float error  = wrap180(setpointYaw - rawYaw);
+
+  switch (state) {
+    case ROTATE:
+      if (fabs(error) > TOL_DEG) {
+        // still moving toward setpoint
+        stableTime = 0;
+        float u = yawPID.compute(error, dt, rawYaw);
+        int pwm = (int)u;
+        if (abs(pwm) < MIN_PWM_DEAD) pwm = 0;
+        motor.setMotorPWM(pwm, -pwm);
+      } else {
+        // within tolerance → wait for STABLE_MS before declaring settled
+        if (stableTime == 0) stableTime = now;
+        else if (now - stableTime >= STABLE_MS) {
+          motor.setMotorPWM(0,0);
+          static bool firstCycle = true;
+          if (firstCycle) {
+            Serial.println("✓ Reached +90°");
+            firstCycle = false;
+          } else {
+            Serial.println("✓ Returned to +90°");
+          }
+          yawPID.reset(rawYaw);
+          state = WAIT;
+          stableTime = 0;
+        }
+      }
+      break;
+
+    case WAIT:
+      // sitting at +90°, waiting for manual twist
+      if (fabs(wrap180(rawYaw - setpointYaw)) > DETECT_THRESH) {
+        Serial.print("Twist detected: yaw="); Serial.println(rawYaw,1);
+        yawPID.reset(rawYaw);
+        state = ROTATE;
+      }
+      break;
   }
 }
