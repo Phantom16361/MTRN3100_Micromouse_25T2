@@ -1,3 +1,5 @@
+// main.ino
+
 #include <Arduino.h>
 #include <Wire.h>
 
@@ -7,21 +9,28 @@
 #include "IMUOdometry.hpp"
 #include "PIDController.hpp"
 
+// ———— PID gains & integral to counter drift ————
+const float KP = 1.5f;
+const float KI = 0.1f;
+const float KD = 0.3f;
+
+// ———— Instantiate the yaw‐PID controller with those gains ————
+PIDController yawPID(KP, KI, KD);
+
+// ———— PWM limits & small‐drift cutoff ————
+const int   MAX_PWM       =  60;   // ±60 PWM clamp
+const int   MIN_PWM_DEAD  =  15;   // overcome stiction
+const float DRIFT_DEG     =   1.0f;// within ±1° → treat as zero
+
+// ———— Yaw references & timing ————
+float initialYaw, setpointYaw;
+unsigned long lastTime = 0;
+
 // ———— Hardware ————
 MotorController motor;
 IMUOdometry      imu;
 
-// ———— PID (gentle) ————
-PIDController yawPID(1.5f, 0.0f, 0.3f);
-const int       MAX_PWM      =  60;    // ±60 PWM clamp
-const int       MIN_PWM_DEAD =  15;    // minimum drive to overcome dead-zone
-const float     TOL_DEG      =   5.0f; // within ±5° → hold
-
-// ———— Yaw refs & timing ————
-float initialYaw, setpointYaw;
-unsigned long lastTime;
-
-// wrap angle into [–180,180]
+// ———— Wrap an angle into (–180, 180] ————
 static float wrap180(float a) {
   while (a >  180.0f) a -= 360.0f;
   while (a < -180.0f) a += 360.0f;
@@ -32,24 +41,25 @@ void setup() {
   Serial.begin(9600);
   while (!Serial);
 
-  Serial.println("=== Continuous 90° correction loop ===");
+  Serial.println("=== Continuous CW→90° correction ===");
   Wire.begin();
 
-  // initialize IMU
-  imu.begin(1, 0);
+  // init IMU
+  imu.begin(/*gyroCfg=*/1, /*accCfg=*/0);
   delay(100);
   imu.update();
 
-  // initialize motors
+  // init motors
   motor.begin();
 
-  // compute fixed +90° setpoint
+  // compute & announce setpoint
   initialYaw  = imu.getYawDegrees();
   setpointYaw = wrap180(initialYaw + 90.0f);
   Serial.print("Start yaw: "); Serial.println(initialYaw,1);
-  Serial.print("Target   : "); Serial.println(setpointYaw,1);
+  Serial.print("90° setpt: "); Serial.println(setpointYaw,1);
 
   // configure PID
+  yawPID.setGains(KP, KI, KD);
   yawPID.setOutputLimits(-MAX_PWM, MAX_PWM);
   yawPID.setDerivativeSmoothing(0.1f);
   yawPID.setUseDerivativeOnMeasurement(true);
@@ -63,38 +73,32 @@ void loop() {
   float dt = (now - lastTime) * 0.001f;
   lastTime = now;
 
-  // read current yaw
+  // read & wrap current yaw
   imu.update();
   float rawYaw = imu.getYawDegrees();
+  float error  = wrap180(setpointYaw - rawYaw);
 
-  // compute wrapped error in (–180,180]
-  float error = wrap180(setpointYaw - rawYaw);
+  // let PID fight drift
+  float u = yawPID.compute(error, dt, rawYaw);
+  int   pwm = (int)u;
 
-  // determine direction: normally by sign(error),
-  // but if near ±180°, choose direction based on rawYaw vs setpointYaw
-  int dir;
-  if (fabs(fabs(error) - 180.0f) < 1.0f) {
-    dir = (rawYaw < setpointYaw) ? +1 : -1;
-  } else {
-    dir = (error > 0.0f) ? +1 : -1;
-  }
-
-  // compute PID on magnitude of error
-  float u = yawPID.compute(fabs(error), dt, rawYaw);
-  int rawPwm = (int)u;
-
-  // enforce dead-zone only when outside tolerance
-  int pwm;
-  if (fabs(error) < TOL_DEG) {
-    // within tolerance → hold still
+  // if error is very small, cut power entirely
+  if (fabs(error) < DRIFT_DEG) {
     pwm = 0;
-  } else if (abs(rawPwm) < MIN_PWM_DEAD) {
-    // small command → bump to overcome stiction
+  }
+  // else, ensure we overcome stiction
+  else if (pwm > 0 && pwm < MIN_PWM_DEAD) {
     pwm = MIN_PWM_DEAD;
-  } else {
-    pwm = abs(rawPwm);
+  }
+  else if (pwm < 0 && pwm > -MIN_PWM_DEAD) {
+    pwm = -MIN_PWM_DEAD;
   }
 
-  // drive motors: dir=+1 → CCW, dir=-1 → CW
-  motor.setMotorPWM(dir * pwm, -dir * pwm);
+  // clamp safety
+  pwm = constrain(pwm, -MAX_PWM, MAX_PWM);
+
+  // always rotate CLOCKWISE toward setpoint:
+  // motor.setMotorPWM(left, right) where positive left/negative right = CCW
+  // so invert to get CW
+  motor.setMotorPWM(-pwm, +pwm);
 }
