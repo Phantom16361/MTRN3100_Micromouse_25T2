@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
 #include "pin_config.hpp"
 #include "robot_param.hpp"
@@ -9,27 +11,29 @@
 #include "IMUOdometry.hpp"
 #include "PIDController.hpp"
 
-// ———— PID gains & integral to counter drift ————
-const float KP = 1.5f;
-const float KI = 0.1f;
-const float KD = 0.3f;
+// OLED configuration
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 32
+#define OLED_RESET    -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-// ———— Instantiate yaw PID ————
+// PID gains
+const float KP = 1.5f, KI = 0.1f, KD = 0.3f;
 PIDController yawPID(KP, KI, KD);
 
-// ———— PWM & thresholds ————
-const int   MAX_PWM           =  60;   // ±60 PWM clamp
-const int   MIN_PWM_DEAD      =  15;   // overcome stiction
-const float DRIFT_DEG         =   1.0f;// within ±1° → zero output
-const float INIT_TOL          =   3.0f;// initial phase tolerance
-const int   INIT_PWM_ANTICW   =  30;   // initial anticlockwise turn speed
+// Motion thresholds
+const int   MAX_PWM       =  100;
+const int   MIN_PWM_DEAD  =   15;    // ↑ increased to overcome stiction
+const float DRIFT_DEG     =   0.0f;
+const float INIT_TOL      =   0.5f;
+const int   INIT_PWM_SPD  =   30;
 
-// ———— Phase flag & yaw refs ————
-static bool firstMove = true;
+// Phase flags & yaw refs
+static bool firstMove      = true;
+static bool didRecalibrate = false;
 float initialYaw, setpointYaw;
 unsigned long lastTime = 0;
 
-// ———— Hardware ————
 MotorController motor;
 IMUOdometry      imu;
 
@@ -44,24 +48,29 @@ void setup() {
   Serial.begin(9600);
   while (!Serial);
 
-  Serial.println("=== Initial clockwise 90° ===");
+  // Initialize OLED
   Wire.begin();
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("SSD1306 init failed");
+    while (1);
+  }
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
 
-  // init IMU
+  // Initialize IMU (performs bias calibration)
   imu.begin(1, 0);
   delay(100);
   imu.update();
 
-  // init motors
+  // Initialize motors
   motor.begin();
 
-  // record initial yaw and compute setpoint (+90°)
+  // Record start yaw and compute setpoint (–90°)
   initialYaw  = imu.getYawDegrees();
   setpointYaw = wrap180(initialYaw - 90.0f);
-  Serial.print("Start yaw: "); Serial.println(initialYaw,1);
-  Serial.print("Target   : "); Serial.println(setpointYaw,1);
 
-  // configure PID
+  // Configure PID
   yawPID.setGains(KP, KI, KD);
   yawPID.setOutputLimits(-MAX_PWM, MAX_PWM);
   yawPID.setDerivativeSmoothing(0.1f);
@@ -76,24 +85,24 @@ void loop() {
   float dt = (now - lastTime) * 0.001f;
   lastTime = now;
 
-  // update yaw
+  // Update IMU
   imu.update();
   float rawYaw = imu.getYawDegrees();
 
-  // PHASE 1: rough turn to setpoint
-  if (firstMove) {
-    // compute shortest‐path error (±180°)
-    float error = wrap180(setpointYaw - rawYaw);
+  // Display current yaw on OLED
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.print("Yaw: ");
+  display.print(rawYaw, 1);
+  display.display();
 
-    // if we're still outside the initial tolerance, keep spinning
-    if (fabs(error) > INIT_TOL) {
-      // pick direction: +error → CCW, -error → CW
-      int dir = (error > 0) ? 1 : -1;
-      // left=-dir*speed, right=+dir*speed → CCW when dir=+1, CW when dir=-1
-      motor.setMotorPWM(-dir * INIT_PWM_ANTICW,
-                         dir * INIT_PWM_ANTICW);
+  // PHASE 1: rough 90° swing
+  if (firstMove) {
+    float err = wrap180(setpointYaw - rawYaw);
+    if (fabs(err) > INIT_TOL) {
+      int dir = (err > 0) ? 1 : -1;
+      motor.setMotorPWM(-dir * INIT_PWM_SPD, dir * INIT_PWM_SPD);
     } else {
-      // close enough—stop and hand off to PID
       motor.setMotorPWM(0, 0);
       firstMove = false;
       yawPID.reset(rawYaw);
@@ -101,23 +110,28 @@ void loop() {
     return;
   }
 
-  // PHASE 2: PID‐based fine correction
+  // PHASE 2: fine PID correction
   float error = wrap180(setpointYaw - rawYaw);
   float u     = yawPID.compute(error, dt, rawYaw);
   int pwm     = (int)u;
 
-  // deadband
-  if (fabs(error) < DRIFT_DEG) {
-    pwm = 0;
-  } else if (pwm > 0 && pwm < MIN_PWM_DEAD) {
-    pwm = MIN_PWM_DEAD;
-  } else if (pwm < 0 && pwm > -MIN_PWM_DEAD) {
-    pwm = -MIN_PWM_DEAD;
+  // One-time recalibration when exactly at setpoint
+  if (!didRecalibrate && fabs(error) < DRIFT_DEG) {
+    imu.begin(1, 0);       // re-run offset calibration
+    delay(100);
+    imu.update();
+    rawYaw = imu.getYawDegrees();
+    yawPID.reset(rawYaw);
+    didRecalibrate = true;
+    motor.setMotorPWM(0, 0);
+    return;
   }
 
-  // clamp
+  // Continuous tiny holds (now large enough to move)
+  if      (pwm > 0 && pwm < MIN_PWM_DEAD)  pwm = MIN_PWM_DEAD;
+  else if (pwm < 0 && pwm > -MIN_PWM_DEAD) pwm = -MIN_PWM_DEAD;
   pwm = constrain(pwm, -MAX_PWM, MAX_PWM);
 
-  // drive: -pwm/+pwm → CCW when pwm>0, CW when pwm<0
+  // Drive: -pwm/+pwm → CCW when pwm>0, CW when pwm<0
   motor.setMotorPWM(-pwm, +pwm);
 }

@@ -38,7 +38,7 @@ void PositionController::setTarget(float targetMM) {
  */
 float PositionController::update(float currentPosMM, float dt) {
     float error = target - currentPosMM;
-    integral += error * dt;
+    integral += min(error,30) * dt;
 
     float derivative = 0;
     if (!firstRun) {
