@@ -101,7 +101,7 @@ void loop() {
     while (error > 180) error -= 360;
     while (error < -180) error += 360;
 
-    float control = yawPID.compute(error, yaw);
+    float control = yawPID.compute(error, dt, yaw);
     control = constrain(control, -100, 100);
     motor.setMotorPWM(control, -control);  // turn robot clockwise
 
@@ -138,7 +138,7 @@ void loop() {
     while (error > 180) error -= 360;
     while (error < -180) error += 360;
 
-    float control = yawPID.compute(error, yaw);
+    float control = yawPID.compute(error, dt, yaw);
     control = constrain(control, -100, 100);
     motor.setMotorPWM(control, -control);  // rotate robot
 
@@ -175,7 +175,7 @@ void loop() {
     while (error > 180) error -= 360;
     while (error < -180) error += 360;
 
-    float control = yawPID.compute(error, yaw);
+    float control = yawPID.compute(error, dt, yaw);
     control = constrain(control, -100, 100);
     motor.setMotorPWM(control, -control);
 
