@@ -14,9 +14,9 @@ Lidar lidar;
 
 // PID gains - define these in robot_param.hpp or here
 #ifndef YAW_KP
-#define YAW_KP 2.0f
+#define YAW_KP 1.0f
 #define YAW_KI 0.0f
-#define YAW_KD 0.1f
+#define YAW_KD 0.3f
 #endif
 
 PIDController yawPID(YAW_KP, YAW_KI, YAW_KD);
@@ -46,11 +46,24 @@ enum TurnState {
 TurnState state = TURN_90_CW;
 bool wasLifted = false;
 
-bool isYawAligned(float current, float target, float tol = 5.0f) {
+bool isYawAligned(float current, float target, float tol = 8.0f) {
   float err = target - current;
   while (err > 180.0f) err -= 360.0f;
   while (err < -180.0f) err += 360.0f;
   return abs(err) < tol;
+}
+
+void printLidarReadings() {
+  int left = lidar.readDistance(LEFT);
+  int front = lidar.readDistance(FRONT);
+  int right = lidar.readDistance(RIGHT);
+
+  Serial.print("LIDAR | Left: ");
+  Serial.print(left);
+  Serial.print(" mm | Front: ");
+  Serial.print(front);
+  Serial.print(" mm | Right: ");
+  Serial.println(right);
 }
 
 LidarSnapshot getLidarSnapshot() {
@@ -86,6 +99,9 @@ void setup() {
 }
 
 void loop() {
+
+  printLidarReadings();
+  delay(500); 
   unsigned long now = millis();
   if (now - lastControlTime < CONTROL_INTERVAL_MS) return;
 
@@ -102,7 +118,7 @@ void loop() {
     while (error < -180) error += 360;
 
     float control = yawPID.compute(error, dt, yaw);
-    control = constrain(control, -100, 100);
+    control = constrain(control, -60, 60);
     motor.setMotorPWM(control, -control);  // turn robot clockwise
 
     if (isYawAligned(yaw, 90.0f)) {
