@@ -28,7 +28,7 @@ void loop() {
   unsigned long now = millis();
   if (now - lastControlTime >= CONTROL_INTERVAL_MS) {
     float dt = (now - lastControlTime) / 2000.0;
-    lastControlTime = now;
+    lastControlTime = now; 
 
     float x = lidar.readDistance(3);
     Serial.print("Distance: ");

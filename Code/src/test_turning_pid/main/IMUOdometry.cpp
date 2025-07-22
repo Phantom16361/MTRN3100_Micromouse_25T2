@@ -4,6 +4,7 @@ IMUOdometry::IMUOdometry()
   : mpu(Wire), yawDeg(0.0f)
 {}
 
+
 void IMUOdometry::begin(uint8_t gyroCfg, uint8_t accCfg) {
     Wire.begin();
     byte st = mpu.begin(gyroCfg, accCfg);
@@ -21,6 +22,9 @@ void IMUOdometry::update() {
     if (yawDeg > 180.0f)       yawDeg -= 360.0f;
     else if (yawDeg < -180.0f) yawDeg += 360.0f;
 }
+
+
+
 
 float IMUOdometry::getYawDegrees() const {
     return yawDeg;

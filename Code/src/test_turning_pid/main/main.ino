@@ -1,212 +1,138 @@
 #include <Arduino.h>
+#include <Wire.h>
+
 #include "pin_config.hpp"
 #include "robot_param.hpp"
-#include "EncoderOdometry.hpp"
 #include "MotorController.hpp"
-#include "PositionController.hpp"
 #include "IMUOdometry.hpp"
-#include "Lidar.hpp"
 #include "PIDController.hpp"
 
+// ———— PID gains & integral to counter drift ————
+const float KP = 1.5f;
+const float KI = 0.2f;
+const float KD = 0.3f;
+
+// ———— Instantiate yaw PID ————
+PIDController yawPID(KP, KI, KD);
+
+// ———— PWM & thresholds ————
+const int   MAX_PWM           =  60;   // ±60 PWM clamp
+const int   MIN_PWM_DEAD      =  12;   // overcome stiction
+const float DRIFT_DEG         =   1.0f; // within ±1° → zero output
+const float LOCKED_TOL        =   2.0f; // tighter lock threshold to stop PID
+const float INIT_TOL          =   5.0f; // initial phase tolerance
+const int   INIT_PWM_ANTICW   =  45;   // initial anticlockwise turn speed
+
+// ———— Phase flag & yaw refs ————
+static bool firstMove = true;
+float initialYaw, setpointYaw;
+unsigned long lastTime = 0;
+static bool isLocked = false; // track whether PID should be stopped
+
+// ———— Hardware ————
 MotorController motor;
-IMUOdometry imu;
-Lidar lidar;
+IMUOdometry      imu;
 
-// PID gains - define these in robot_param.hpp or here
-#ifndef YAW_KP
-#define YAW_KP 1.0f
-#define YAW_KI 0.0f
-#define YAW_KD 0.3f
-#endif
-
-PIDController yawPID(YAW_KP, YAW_KI, YAW_KD);
-
-unsigned long lastControlTime = 0;
-//const unsigned long CONTROL_INTERVAL_MS = 50; // 20 Hz control loop
-
-float savedYaw = 0.0f;
-
-struct LidarSnapshot {
-  int left;
-  int front;
-  int right;
-};
-
-LidarSnapshot targetLidar;
-
-enum TurnState {
-  TURN_90_CW,
-  WAIT_FOR_LIFT_CCW,
-  CORRECT_CCW,
-  WAIT_FOR_LIFT_CW,
-  CORRECT_CW,
-  DONE
-};
-
-TurnState state = TURN_90_CW;
-bool wasLifted = false;
-
-bool isYawAligned(float current, float target, float tol = 8.0f) {
-  float err = target - current;
-  while (err > 180.0f) err -= 360.0f;
-  while (err < -180.0f) err += 360.0f;
-  return abs(err) < tol;
-}
-
-void printLidarReadings() {
-  int left = lidar.readDistance(LEFT);
-  int front = lidar.readDistance(FRONT);
-  int right = lidar.readDistance(RIGHT);
-
-  Serial.print("LIDAR | Left: ");
-  Serial.print(left);
-  Serial.print(" mm | Front: ");
-  Serial.print(front);
-  Serial.print(" mm | Right: ");
-  Serial.println(right);
-}
-
-LidarSnapshot getLidarSnapshot() {
-  return { 
-    lidar.readDistance(LEFT),
-    lidar.readDistance(FRONT),
-    lidar.readDistance(RIGHT)
-  };
-}
-
-bool isLidarAligned(const LidarSnapshot& current, const LidarSnapshot& target, int tol = 30) {
-  return abs(current.left  - target.left)  < tol &&
-         abs(current.front - target.front) < tol &&
-         abs(current.right - target.right) < tol;
+// wrap angle into (–180,180]
+static float wrap180(float a) {
+  while (a >  180.0f) a -= 360.0f;
+  while (a < -180.0f) a += 360.0f;
+  return a;
 }
 
 void setup() {
-  Serial.begin(115200);
-  delay(300);
-  Serial.println("IMU + Lidar Turn Task Start");
+  Serial.begin(9600);
+  while (!Serial);
 
-  motor.begin();
-  imu.begin();
-  lidar.begin();
+  Serial.println("=== Initial clockwise 90° ===");
+  Wire.begin();
+
+  // init IMU
+  imu.begin(1, 0);
+  delay(1000);
   imu.update();
 
-  savedYaw = imu.getYawDegrees();
+  // init motors
+  motor.begin();
 
-  yawPID.setTargetSetpoint(90.0f); // first turn target
-  yawPID.reset();
+  // record initial yaw and compute setpoint (+90°)
+  initialYaw  = imu.getYawDegrees();
+  setpointYaw = wrap180(initialYaw - 90.0f);
+  Serial.print("Start yaw: "); Serial.println(initialYaw,1);
+  Serial.print("Target   : "); Serial.println(setpointYaw,1);
 
-  lastControlTime = millis();
+  // configure PID
+  yawPID.setGains(KP, KI, KD);
+  yawPID.setOutputLimits(-MAX_PWM, MAX_PWM);
+  yawPID.setDerivativeSmoothing(0.1f);
+  yawPID.setUseDerivativeOnMeasurement(true);
+  yawPID.reset(initialYaw);
+
+  lastTime = millis();
 }
 
 void loop() {
-
-  printLidarReadings();
-  delay(500); 
   unsigned long now = millis();
-  if (now - lastControlTime < CONTROL_INTERVAL_MS) return;
+  float dt = (now - lastTime) * 0.001f;
+  lastTime = now;
 
-  float dt = (now - lastControlTime) / 1000.0f;
-  lastControlTime = now;
-
+  // update yaw
   imu.update();
-  float yaw = imu.getYawDegrees();
+  float rawYaw = imu.getYawDegrees();
 
-  switch (state) {
-  case TURN_90_CW: {
-    float error = 90.0f - yaw;
-    while (error > 180) error -= 360;
-    while (error < -180) error += 360;
+  // PHASE 1: rough turn to setpoint
+  if (firstMove) {
+    // compute shortest‐path error (±180°)
+    float error = wrap180(setpointYaw - rawYaw);
 
-    float control = yawPID.compute(error, dt, yaw);
-    control = constrain(control, -60, 60);
-    motor.setMotorPWM(control, -control);  // turn robot clockwise
-
-    if (isYawAligned(yaw, 90.0f)) {
+    // if we're still outside the initial tolerance, keep spinning
+    if (fabs(error) > INIT_TOL) {
+      // pick direction: +error → CCW, -error → CW
+      int dir = (error > 0) ? 1 : -1;
+      // left=-dir*speed, right=+dir*speed → CCW when dir=+1, CW when dir=-1
+      motor.setMotorPWM(-dir * INIT_PWM_ANTICW,
+                         dir * INIT_PWM_ANTICW);
+    } else {
+      // close enough—stop and hand off to PID
       motor.setMotorPWM(0, 0);
-      savedYaw = yaw;  // save current yaw as setpoint
-      state = WAIT_FOR_LIFT_CCW;
-      Serial.println("Turn 90 CW done, waiting for lift CCW");
+      firstMove = false;
+      yawPID.reset(rawYaw);
+      isLocked = false; // allow PID control now
     }
-    break;
+    return;
   }
 
-  case WAIT_FOR_LIFT_CCW: {
-    LidarSnapshot current = getLidarSnapshot();
-    if (!wasLifted && current.front > 200) { // lifted if lidar front sees no ground (distance jumps)
-      wasLifted = true;
-      targetLidar = current; // save snapshot
-      state = CORRECT_CCW;
-      yawPID.setTargetSetpoint(savedYaw - 120);  // target yaw after CCW rotate by demonstrator
-      yawPID.reset();
-      Serial.println("Lift detected, correcting CCW");
-    }
-    if (wasLifted && current.front < 150) {
-      wasLifted = false; // lowered back down
-    }
-    break;
+  // PHASE 2: PID‐based fine correction
+  float error = wrap180(setpointYaw - rawYaw);
+  int pwm = 0;
+
+  if (fabs(error) < DRIFT_DEG) {
+    pwm = 0;
+    yawPID.reset(rawYaw); // reset integral to avoid windup
+    isLocked = true;      // stop PID corrections
+  }
+  else if (fabs(error) < LOCKED_TOL) {
+    // within lock tolerance but outside drift threshold,
+    // keep motors stopped but don't reset PID
+    pwm = 0;
+    isLocked = true;
+  }
+  else {
+    // outside tolerance, run PID
+    isLocked = false;
+    float u = yawPID.compute(error, dt, rawYaw);
+    pwm = (int)u;
+
+    // enforce deadband to overcome stiction
+    if (pwm > 0 && pwm < MIN_PWM_DEAD) pwm = MIN_PWM_DEAD;
+    else if (pwm < 0 && pwm > -MIN_PWM_DEAD) pwm = -MIN_PWM_DEAD;
   }
 
-  case CORRECT_CCW: {
-    float targetYaw = savedYaw - 120;
-    if (targetYaw < -180) targetYaw += 360;
+  // clamp output PWM
+  pwm = constrain(pwm, -MAX_PWM, MAX_PWM);
 
-    float error = targetYaw - yaw;
-    while (error > 180) error -= 360;
-    while (error < -180) error += 360;
+  // apply motor control (-pwm, +pwm) for CCW/CW turn
+  motor.setMotorPWM(-pwm, +pwm);
 
-    float control = yawPID.compute(error, dt, yaw);
-    control = constrain(control, -100, 100);
-    motor.setMotorPWM(control, -control);  // rotate robot
 
-    if (isYawAligned(yaw, targetYaw)) {
-      motor.setMotorPWM(0, 0);
-      savedYaw = yaw;
-      state = WAIT_FOR_LIFT_CW;
-      Serial.println("Corrected CCW, waiting for lift CW");
-    }
-    break;
-  }
-
-  case WAIT_FOR_LIFT_CW: {
-    LidarSnapshot current = getLidarSnapshot();
-    if (!wasLifted && current.front > 200) { // detect lift again
-      wasLifted = true;
-      targetLidar = current;
-      state = CORRECT_CW;
-      yawPID.setTargetSetpoint(savedYaw + 120);  // target yaw after CW rotate by demonstrator
-      yawPID.reset();
-      Serial.println("Lift detected, correcting CW");
-    }
-    if (wasLifted && current.front < 150) {
-      wasLifted = false; // lowered back down
-    }
-    break;
-  }
-
-  case CORRECT_CW: {
-    float targetYaw = savedYaw + 120;
-    if (targetYaw > 180) targetYaw -= 360;
-
-    float error = targetYaw - yaw;
-    while (error > 180) error -= 360;
-    while (error < -180) error += 360;
-
-    float control = yawPID.compute(error, dt, yaw);
-    control = constrain(control, -100, 100);
-    motor.setMotorPWM(control, -control);
-
-    if (isYawAligned(yaw, targetYaw)) {
-      motor.setMotorPWM(0, 0);
-      state = DONE;
-      Serial.println("Corrected CW, task complete");
-    }
-    break;
-  }
-
-  case DONE: {
-    motor.setMotorPWM(0, 0);
-    // Optionally stay idle here or do other stuff
-    break;
-  }
-}
 }
