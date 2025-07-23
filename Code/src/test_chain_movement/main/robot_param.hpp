@@ -25,7 +25,7 @@
 #define WHEEL_RADIUS_MM    (WHEEL_DIAMETER_MM / 2.0)
 
 // Distance between wheel centers (axle length)
-#define AXLE_LENGTH_MM     91
+#define AXLE_LENGTH_MM     90
 
 // Encoder resolution
 #define TICKS_PER_REV      700

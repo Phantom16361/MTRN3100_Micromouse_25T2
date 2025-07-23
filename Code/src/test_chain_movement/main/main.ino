@@ -7,15 +7,20 @@
 #include "MotorController.hpp"   // DRV8835 interface
 
 // === Maze constants ===
-static const float CELL_SIZE_MM = 180.0f;         // one maze cell
-static const float TURN_RAD     = M_PI / 2.0f;    // 90° in radians
+static const float CELL_SIZE_MM     = 177.7f;    // one maze cell
+static const float TURN_RAD         = M_PI / 2.0f; // 90° in radians
 
-// === Tuning: compensate overshoot by cutting turns early ===
-static const float ANGLE_SCALE = 0.90f;           // do 90% of the turn
+// === Turn tuning ===
+// Restore full 90° turn (no undershoot)
+static const float ANGLE_SCALE      = 0.863f;
 
 // === Motor/drive parameters ===
-static const int   PWM_DRIVE    = 150;            // forward speed
-static const int   PWM_TURN     = 150;            // turn-in-place speed
+static const int   PWM_DRIVE        = 150;      // forward speed
+static const int   PWM_TURN         = 150;      // turn-in-place speed
+
+// === Motor calibration scales ===
+static const float LEFT_PWM_SCALE   = 1.00f;    // scale for left motor PWM
+static const float RIGHT_PWM_SCALE  = 0.98f;    // scale for right motor PWM
 
 // === Global objects ===
 EncoderOdometry odom;
@@ -23,15 +28,17 @@ MotorController motor;
 
 // Wrap angle into (–π, π]
 static float wrap180rad(float a) {
-  while (a >  M_PI)  a -= 2.0f * M_PI;
-  while (a <= -M_PI) a += 2.0f * M_PI;
+  while (a >  M_PI)   a -= 2.0f * M_PI;
+  while (a <= -M_PI)  a += 2.0f * M_PI;
   return a;
 }
 
 /// Drive forward exactly one cell (180 mm)
 void forwardOneCell(int pwm = PWM_DRIVE) {
   odom.reset();
-  motor.setMotorPWM(pwm, pwm);
+  int leftPWM  = (int)(pwm * LEFT_PWM_SCALE);
+  int rightPWM = (int)(pwm * RIGHT_PWM_SCALE);
+  motor.setMotorPWM(leftPWM, rightPWM);
   while (true) {
     odom.update();
     float x = odom.getX();
@@ -42,11 +49,13 @@ void forwardOneCell(int pwm = PWM_DRIVE) {
   motor.setMotorPWM(0, 0);
 }
 
-/// Turn in place 90° CCW (but only ANGLE_SCALE×90°)
+/// Turn in place 90° CCW
 void turnLeft(int pwm = PWM_TURN) {
-  float target = TURN_RAD * ANGLE_SCALE;
+  float target  = TURN_RAD * ANGLE_SCALE;
   odom.reset();
-  motor.setMotorPWM(-pwm, +pwm);
+  int leftPWM   = (int)(-pwm * LEFT_PWM_SCALE);
+  int rightPWM  = (int)(pwm * RIGHT_PWM_SCALE);
+  motor.setMotorPWM(leftPWM, rightPWM);
   while (true) {
     odom.update();
     if (wrap180rad(odom.getTheta()) >= target) break;
@@ -55,11 +64,13 @@ void turnLeft(int pwm = PWM_TURN) {
   motor.setMotorPWM(0, 0);
 }
 
-/// Turn in place 90° CW (but only ANGLE_SCALE×90°)
+/// Turn in place 90° CW
 void turnRight(int pwm = PWM_TURN) {
-  float target = -TURN_RAD * ANGLE_SCALE;
+  float target  = -TURN_RAD * ANGLE_SCALE;
   odom.reset();
-  motor.setMotorPWM(+pwm, -pwm);
+  int leftPWM   = (int)(pwm * LEFT_PWM_SCALE);
+  int rightPWM  = (int)(-pwm * RIGHT_PWM_SCALE);
+  motor.setMotorPWM(leftPWM, rightPWM);
   while (true) {
     odom.update();
     if (wrap180rad(odom.getTheta()) <= target) break;
@@ -73,10 +84,10 @@ void executeCommands(const char *cmds) {
   for (int i = 0; cmds[i] != '\0'; i++) {
     char c = tolower(cmds[i]);
     switch (c) {
-      case 'f': forwardOneCell();  break;
-      case 'l': turnLeft();        break;
-      case 'r': turnRight();       break;
-      default:  /* ignore */       break;
+      case 'f': forwardOneCell(); break;
+      case 'l': turnLeft();       break;
+      case 'r': turnRight();      break;
+      default:  /* ignore */      break;
     }
     delay(200);  // brief pause between actions
   }
@@ -86,15 +97,14 @@ void setup() {
   Serial.begin(9600);
   while (!Serial);
 
-  // give you 3 seconds to move away before we start driving
-  Serial.println("Power on! Starting in 3 seconds...");
+  Serial.println("Waiting 3s before start...");
   delay(3000);
 
   odom.begin();   // attach interrupts, zero pose
   motor.begin();  // configure pins, stop motors
 
-  Serial.println("Running command string: lfrfflfr");
-  executeCommands("rlrlrlrlrlff");
+  Serial.println("Running command sequence: rlrlrlrlrlff");
+  executeCommands("f");
 }
 
 void loop() {
