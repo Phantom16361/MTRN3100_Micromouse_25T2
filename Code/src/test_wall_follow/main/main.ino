@@ -58,9 +58,11 @@ float getSmoothedDistance(float newReading) {
 
 void loop() {
   unsigned long now = millis();
+  
   if (now - lastControlTime < CONTROL_MS) return;
   float dt = (now - lastControlTime) / 2000.0f;
   lastControlTime = now;
+
 
   // raw LIDAR read
   float rawDist = lidar.readDistance(1);
