@@ -67,9 +67,11 @@
 #define RIGHT_VEL_KD 0.02f
 
 // ========== Position PID Values ==========
-#define LEFT_POS_KP 1.10f
-#define LEFT_POS_KI 0.1f
+#define LEFT_POS_KP 1.20f
+#define LEFT_POS_KI 0.4f
 #define LEFT_POS_KD 0.1f
+
+// white wall values 1.10 0.1 0.1
 
 #define RIGHT_POS_KP 1.10f
 #define RIGHT_POS_KI 0.30f
