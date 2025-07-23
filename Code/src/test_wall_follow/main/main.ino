@@ -11,7 +11,7 @@ Lidar lidar;
 
 PositionController position(LEFT_POS_KP, LEFT_POS_KI, LEFT_POS_KD);   // Tweak gains
 unsigned long lastControlTime = 0;
-float targetPositionSet = 100.0;
+float targetPositionSet = 118.0;
 
 void setup() {
   Serial.begin(115200);
@@ -34,10 +34,17 @@ void loop() {
     Serial.print("Distance: ");
     Serial.print(x);
     Serial.println(" mm");
-    
-    int output = static_cast<int>(position.update(x, dt));
 
-    motor.setMotorPWM(-output, -output);
+    if (x == -2) {
+      motor.setMotorPWM(50, 50);
+    } else {
+      int output = static_cast<int>(position.update(x, dt));
+      motor.setMotorPWM(-output, -output);
+    }
+    
+    
+
+
 
   }
 }

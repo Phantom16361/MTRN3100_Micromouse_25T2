@@ -26,8 +26,14 @@ void Lidar::begin() {
 }
 
 int Lidar::readDistance(LidarPosition pos) {
-    if (pos < 0 || pos > 2) return -5;
-    return lidars[pos].readRangeSingleMillimeters();
+    if (pos < 0 || pos > 2) return -1;
+    int distance = lidars[pos].readRangeSingleMillimeters();
+
+    if (distance == 255) {
+        return -2;
+    }
+
+    return distance;
 }
 
 void Lidar::enableLidar(int index) {
