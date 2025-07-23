@@ -7,20 +7,21 @@
 #include "MotorController.hpp"   // DRV8835 interface
 
 // === Maze constants ===
-static const float CELL_SIZE_MM     = 177.7f;    // one maze cell
+static const float CELL_SIZE_MM     = 175.0f;    // one maze cell
 static const float TURN_RAD         = M_PI / 2.0f; // 90° in radians
 
 // === Turn tuning ===
 // Restore full 90° turn (no undershoot)
-static const float ANGLE_SCALE      = 0.863f;
+static const float ANGLE_SCALE_RIGHT      = 0.91f;
+static const float ANGLE_SCALE_LEFT       = 0.86f;
 
 // === Motor/drive parameters ===
 static const int   PWM_DRIVE        = 150;      // forward speed
-static const int   PWM_TURN         = 150;      // turn-in-place speed
+static const int   PWM_TURN         = 130;      // turn-in-place speed
 
 // === Motor calibration scales ===
 static const float LEFT_PWM_SCALE   = 1.00f;    // scale for left motor PWM
-static const float RIGHT_PWM_SCALE  = 0.98f;    // scale for right motor PWM
+static const float RIGHT_PWM_SCALE  = 0.975f;    // scale for right motor PWM
 
 // === Global objects ===
 EncoderOdometry odom;
@@ -51,7 +52,7 @@ void forwardOneCell(int pwm = PWM_DRIVE) {
 
 /// Turn in place 90° CCW
 void turnLeft(int pwm = PWM_TURN) {
-  float target  = TURN_RAD * ANGLE_SCALE;
+  float target  = TURN_RAD * ANGLE_SCALE_LEFT;
   odom.reset();
   int leftPWM   = (int)(-pwm * LEFT_PWM_SCALE);
   int rightPWM  = (int)(pwm * RIGHT_PWM_SCALE);
@@ -66,7 +67,7 @@ void turnLeft(int pwm = PWM_TURN) {
 
 /// Turn in place 90° CW
 void turnRight(int pwm = PWM_TURN) {
-  float target  = -TURN_RAD * ANGLE_SCALE;
+  float target  = -TURN_RAD * ANGLE_SCALE_RIGHT;
   odom.reset();
   int leftPWM   = (int)(pwm * LEFT_PWM_SCALE);
   int rightPWM  = (int)(-pwm * RIGHT_PWM_SCALE);
