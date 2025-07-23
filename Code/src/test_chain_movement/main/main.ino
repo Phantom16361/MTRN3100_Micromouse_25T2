@@ -104,7 +104,7 @@ void setup() {
   motor.begin();  // configure pins, stop motors
 
   Serial.println("Running command sequence: rlrlrlrlrlff");
-  executeCommands("f");
+  executeCommands("lfrffrfl");
 }
 
 void loop() {
