@@ -5,6 +5,7 @@
 
 #include "EncoderOdometry.hpp"   // odometry from wheel ticks
 #include "MotorController.hpp"   // DRV8835 interface
+#include "PositionController.hpp"
 
 // === Maze constants ===
 static const float CELL_SIZE_MM = 180.0f;         // one maze cell
@@ -21,6 +22,10 @@ static const int   PWM_TURN     = 150;            // turn-in-place speed
 EncoderOdometry odom;
 MotorController motor;
 
+PositionController position(LEFT_POS_KP, LEFT_POS_KI, LEFT_POS_KD);
+unsigned long lastControlTime = 0;
+
+
 // Wrap angle into (–π, π]
 static float wrap180rad(float a) {
   while (a >  M_PI)  a -= 2.0f * M_PI;
@@ -29,24 +34,35 @@ static float wrap180rad(float a) {
 }
 
 /// Drive forward exactly one cell (180 mm)
-void forwardOneCell(int pwm = PWM_DRIVE) {
+void forwardOneCell() {
   odom.reset();
-  motor.setMotorPWM(pwm, pwm);
-  while (true) {
+  position.reset();
+  position.setTarget(CELL_SIZE_MM);
+
+  unsigned long startTime = millis();  // Record the start time
+  unsigned long lastControlTime = millis();  // For control interval timing
+
+  while (millis() - startTime <= 4000) {  // Run for 10 seconds
     odom.update();
-    float x = odom.getX();
-    float y = odom.getY();
-    if (sqrt(x*x + y*y) >= CELL_SIZE_MM) break;
-    delay(2);
+
+    unsigned long now = millis();
+    if (now - lastControlTime >= CONTROL_INTERVAL_MS) {
+      float dt = (now - lastControlTime) / 1000.0;  // dt in seconds
+      lastControlTime = now;
+
+      int x = odom.getX();
+      int output = static_cast<int>(position.update(static_cast<float>(x), dt));
+      motor.setMotorPWM(output, output);
+    }
   }
   motor.setMotorPWM(0, 0);
 }
 
 /// Turn in place 90° CCW (but only ANGLE_SCALE×90°)
-void turnLeft(int pwm = PWM_TURN) {
+void turnLeft() {
   float target = TURN_RAD * ANGLE_SCALE;
   odom.reset();
-  motor.setMotorPWM(-pwm, +pwm);
+  motor.setMotorPWM(-0, +0);
   while (true) {
     odom.update();
     if (wrap180rad(odom.getTheta()) >= target) break;
@@ -56,10 +72,10 @@ void turnLeft(int pwm = PWM_TURN) {
 }
 
 /// Turn in place 90° CW (but only ANGLE_SCALE×90°)
-void turnRight(int pwm = PWM_TURN) {
+void turnRight() {
   float target = -TURN_RAD * ANGLE_SCALE;
   odom.reset();
-  motor.setMotorPWM(+pwm, -pwm);
+  motor.setMotorPWM(+0, -0);
   while (true) {
     odom.update();
     if (wrap180rad(odom.getTheta()) <= target) break;
@@ -94,7 +110,7 @@ void setup() {
   motor.begin();  // configure pins, stop motors
 
   Serial.println("Running command string: lfrfflfr");
-  executeCommands("rlrlrlrlrlff");
+  executeCommands("fffffff");
 }
 
 void loop() {
