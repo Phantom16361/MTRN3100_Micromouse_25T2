@@ -8,9 +8,11 @@
 #include "PositionController.hpp"
 #include "Lidar.hpp"
 
+
 MotorController    motor;
 Lidar              lidar;
 PositionController position(LEFT_POS_KP, LEFT_POS_KI, LEFT_POS_KD);
+
 
 static const float targetPositionSet     = 95.0f;
 static const unsigned long CONTROL_MS = 50;  // e.g. 20 Hz control
@@ -29,7 +31,7 @@ void setup() {
   delay(3000);
   Serial.println("Wall follow with LIDAR smoothing");
 
-  motor.begin();
+
   lidar.begin();
   position.setTarget(targetPositionSet);
 
