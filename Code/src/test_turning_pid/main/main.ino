@@ -22,7 +22,7 @@ const float KP = 1.5f, KI = 0.1f, KD = 0.3f;
 PIDController yawPID(KP, KI, KD);
 
 // Motion thresholds
-const int   MAX_PWM       =  100;
+const int   MAX_PWM       =  200;
 const int   MIN_PWM_DEAD  =   15;    // ↑ increased to overcome stiction
 const float DRIFT_DEG     =   0.0f;
 const float INIT_TOL      =   0.5f;

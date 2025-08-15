@@ -1,96 +1,137 @@
+// main.ino
 
 #include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
 #include "pin_config.hpp"
 #include "robot_param.hpp"
-#include "EncoderOdometry.hpp"
 #include "MotorController.hpp"
+#include "IMUOdometry.hpp"
 #include "PIDController.hpp"
 
-EncoderOdometry odom(WHEEL_RADIUS_MM, AXLE_LENGTH_MM, TICKS_PER_REV);
+// OLED configuration
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 32
+#define OLED_RESET    -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// PID gains
+const float KP = 1.5f, KI = 0.1f, KD = 0.3f;
+PIDController yawPID(KP, KI, KD);
+
+// Motion thresholds
+const int   MAX_PWM       =  200;
+const int   MIN_PWM_DEAD  =   15;    // ↑ increased to overcome stiction
+const float DRIFT_DEG     =   0.0f;
+const float INIT_TOL      =   0.5f;
+const int   INIT_PWM_SPD  =   30;
+
+// Phase flags & yaw refs
+static bool firstMove      = true;
+static bool didRecalibrate = false;
+float initialYaw, setpointYaw;
+unsigned long lastTime = 0;
+
 MotorController motor;
+IMUOdometry      imu;
 
-PIDController leftPID(LEFT_VEL_KP, LEFT_VEL_KI, LEFT_VEL_KD);
-PIDController rightPID(RIGHT_VEL_KP, RIGHT_VEL_KI, RIGHT_VEL_KD);
-
-unsigned long lastControlTime = 0;
-const unsigned long CONTROL_INTERVAL_MS = 25;
-
-float targetSpeedSet = 200.0;
-float targetSpeedL = 0.0;
-float targetSpeedR = 0.0;
+// wrap angle into (–180,180]
+static float wrap180(float a) {
+  while (a >  180.0f) a -= 360.0f;
+  while (a < -180.0f) a += 360.0f;
+  return a;
+}
 
 void setup() {
-  Serial.begin(115200);
-  delay(300);
-  Serial.println("Looping Step Input PID Tuner");
+  Serial.begin(9600);
+  while (!Serial);
 
-  odom.begin();
+  // Initialize OLED
+  Wire.begin();
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("SSD1306 init failed");
+    while (1);
+  }
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+
+  // Initialize IMU (performs bias calibration)
+  imu.begin(1, 0);
+  delay(100);
+  imu.update();
+
+  // Initialize motors
   motor.begin();
 
-  leftPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
-  rightPID.setOutputLimits(MIN_PWM_OUTPUT, MAX_PWM_OUTPUT);
+  // Record start yaw and compute setpoint (–90°)
+  initialYaw  = imu.getYawDegrees();
+  setpointYaw = wrap180(initialYaw - 90.0f);
 
-  leftPID.setDerivativeSmoothing(0.1);
-  rightPID.setDerivativeSmoothing(0.1);
+  // Configure PID
+  yawPID.setGains(KP, KI, KD);
+  yawPID.setOutputLimits(-MAX_PWM, MAX_PWM);
+  yawPID.setDerivativeSmoothing(0.1f);
+  yawPID.setUseDerivativeOnMeasurement(true);
+  yawPID.reset(initialYaw);
 
-  leftPID.setUseDerivativeOnMeasurement(true);
-  rightPID.setUseDerivativeOnMeasurement(true);
-
-  leftPID.enableDerivativeFreezeOnZeroSP(true);
-  rightPID.enableDerivativeFreezeOnZeroSP(true);
-
-  leftPID.setVelocityDeadband(0.1);
-  rightPID.setVelocityDeadband(0.1);
+  lastTime = millis();
 }
 
 void loop() {
-  odom.update();
   unsigned long now = millis();
+  float dt = (now - lastTime) * 0.001f;
+  lastTime = now;
 
-  if (now - lastControlTime >= CONTROL_INTERVAL_MS) {
-    float dt = (now - lastControlTime) / 1000.0;
-    lastControlTime = now;
+  // Update IMU
+  imu.update();
+  float rawYaw = imu.getYawDegrees();
 
-    // 4s ON, 4s OFF step pattern
-    if ((now / 1000) % 8 < 4) {
-      targetSpeedL = targetSpeedSet;
-      targetSpeedR = targetSpeedSet;
+  // Display current yaw on OLED
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.print("Yaw: ");
+  display.print(rawYaw, 1);
+  display.display();
+
+  // PHASE 1: rough 90° swing
+  if (firstMove) {
+    float err = wrap180(setpointYaw - rawYaw);
+    if (fabs(err) > INIT_TOL) {
+      int dir = (err > 0) ? 1 : -1;
+      motor.setMotorPWM(-dir * INIT_PWM_SPD, dir * INIT_PWM_SPD);
     } else {
-      targetSpeedL = 0.0;
-      targetSpeedR = 0.0;
+      motor.setMotorPWM(0, 0);
+      firstMove = false;
+      yawPID.reset(rawYaw);
     }
-
-    float leftVel = odom.getLeftSpeedMMs();
-    float rightVel = odom.getRightSpeedMMs();
-
-    float errorL = targetSpeedL - leftVel;
-    float errorR = targetSpeedR - rightVel;
-
-    leftPID.setTargetSetpoint(targetSpeedL);
-    rightPID.setTargetSetpoint(targetSpeedR);
-
-    float leftPWM = leftPID.compute(errorL, dt, leftVel);
-    float rightPWM = rightPID.compute(errorR, dt, rightVel);
-
-    if (targetSpeedL == 0 && abs(leftVel) < 1.0) {
-      leftPID.reset();
-      leftPWM = 0;
-    }
-
-    if (targetSpeedR == 0 && abs(rightVel) < 1.0) {
-      rightPID.reset();
-      rightPWM = 0;
-    }
-
-    motor.setMotorPWM(leftPWM, rightPWM);
-
-    // Serial plotter output
-    Serial.print("L_SP:"); Serial.print(targetSpeedL, 2); Serial.print(" ");
-    Serial.print("L_VEL:"); Serial.print(leftVel, 2); Serial.print(" ");
-    Serial.print("L_OUT:"); Serial.print(leftPWM, 2); Serial.print(" ");
-    Serial.print("R_SP:"); Serial.print(targetSpeedR, 2); Serial.print(" ");
-    Serial.print("R_VEL:"); Serial.print(rightVel, 2); Serial.print(" ");
-    Serial.print("R_OUT:"); Serial.print(rightPWM, 2); Serial.print(" ");
-    Serial.print("REF_Bottom:-100 "); Serial.println("REF_Top:250");
+    return;
   }
+
+  // PHASE 2: fine PID correction
+  float error = wrap180(setpointYaw - rawYaw);
+  float u     = yawPID.compute(error, dt, rawYaw);
+  int pwm     = (int)u;
+
+  // One-time recalibration when exactly at setpoint
+  if (!didRecalibrate && fabs(error) < DRIFT_DEG) {
+    imu.begin(1, 0);       // re-run offset calibration
+    delay(100);
+    imu.update();
+    rawYaw = imu.getYawDegrees();
+    yawPID.reset(rawYaw);
+    didRecalibrate = true;
+    motor.setMotorPWM(0, 0);
+    return;
+  }
+
+  // Continuous tiny holds (now large enough to move)
+  if      (pwm > 0 && pwm < MIN_PWM_DEAD)  pwm = MIN_PWM_DEAD;
+  else if (pwm < 0 && pwm > -MIN_PWM_DEAD) pwm = -MIN_PWM_DEAD;
+  pwm = constrain(pwm, -MAX_PWM, MAX_PWM);
+
+  // Drive: -pwm/+pwm → CCW when pwm>0, CW when pwm<0
+  motor.setMotorPWM(-pwm, +pwm);
 }

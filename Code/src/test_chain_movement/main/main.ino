@@ -11,15 +11,21 @@ static const float CELL_SIZE_MM     = 175.0f;    // one maze cell
 static const float TURN_RAD         = M_PI / 2.0f; // 90° in radians
 
 // === Turn tuning ===
-// Restore full 90° turn (no undershoot)
-static const float ANGLE_SCALE_RIGHT      = 0.91f;
-static const float ANGLE_SCALE_LEFT       = 0.86f;
+// // FOR ACTUAL SIMIULATION
+//static const float ANGLE_SCALE_RIGHT      = 0.91f;
+// static const float ANGLE_SCALE_LEFT       = 0.86f;
+
+static const float ANGLE_SCALE_RIGHT      = 0.84f;
+static const float ANGLE_SCALE_LEFT       = 0.79f;
 
 // === Motor/drive parameters ===
 static const int   PWM_DRIVE        = 150;      // forward speed
 static const int   PWM_TURN         = 130;      // turn-in-place speed
 
-// === Motor calibration scales ===
+// FOR ACTUAL SIMIULATION
+// static const float LEFT_PWM_SCALE   = 1.00f;    // scale for left motor PWM
+// static const float RIGHT_PWM_SCALE  = 0.975f;    // scale for right motor PWM
+
 static const float LEFT_PWM_SCALE   = 1.00f;    // scale for left motor PWM
 static const float RIGHT_PWM_SCALE  = 0.975f;    // scale for right motor PWM
 
@@ -105,7 +111,7 @@ void setup() {
   motor.begin();  // configure pins, stop motors
 
   Serial.println("Running command sequence: rlrlrlrlrlff");
-  executeCommands("lfrffrfl");
+  executeCommands("rffff");
 }
 
 void loop() {
