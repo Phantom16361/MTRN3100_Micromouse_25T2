@@ -1,77 +1,48 @@
-/**************************************************************
- *  File         : PIDController.hpp
- *  Author       : Jason E Tomczyk
- *  Description  : Header for velocity PID controller module.
- *                 Includes factory methods for left/right wheels,
- *                 and interface for error-based or measurement-
- *                 based derivative logic.
- * 
- *  Version      : 1.0
- *  Created On   : 2025-07-16
- *  Last Updated : 2025-07-16
- * 
- *  Changelog:
- *    - [v1.0] Added configurable PID with velocity deadband,
- *             smoothing filter, and static instantiation.
- *************************************************************/
+#ifndef PID_CONTROLLER_HPP
+#define PID_CONTROLLER_HPP
 
-#pragma once
-#include "robot_param.hpp"
+#include <Arduino.h>
 
-/**
- * @brief General-purpose PID controller with embedded configuration.
- *
- * Supports:
- * - Derivative filtering (EMA)
- * - Deadband threshold
- * - Output clamping
- * - Derivative on measurement or error
- * - Derivative freeze on zero setpoint (useful for hold mode)
- *
- * Instantiation via:
- *   PIDController leftPID = PIDController::Left();
- *   PIDController rightPID = PIDController::Right();
- */
 class PIDController {
 public:
-    PIDController(float kp, float ki, float kd);
+  PIDController(float kp=0.f, float ki=0.f, float kd=0.f);
 
-    /// Factory constructor for left wheel PID controller
-    static PIDController Left();
+  // Config
+  void setGains(float kp, float ki, float kd);
+  void setOutputLimits(float minVal, float maxVal);
+  void setDerivativeSmoothing(float smoothingAlpha);     // 0..1 (EMA on D term)
+  void setUseDerivativeOnMeasurement(bool enable);       // true = D on measurement, false = D on error
+  void setFixedDt(float dt) { fixedDt = (dt > 0.f) ? dt : fixedDt; }
 
-    /// Factory constructor for right wheel PID controller
-    static PIDController Right();
+  // State
+  void reset();                     // full reset
+  void reset(float currentMeas);    // seeds lastMeasurement to avoid D-kick
 
-    void setGains(float kp, float ki, float kd);
-    void setOutputLimits(float minVal, float maxVal);
-    void setDerivativeSmoothing(float smoothingAlpha);
-    void reset();
-    void enableDerivativeFreezeOnZeroSP(bool enable);
-    void setVelocityDeadband(float threshold);
-    void setUseDerivativeOnMeasurement(bool enable);
-    void setTargetSetpoint(float sp);
-
-    /**
-     * @brief Runs the PID compute step.
-     * @param error = setpoint - measurement
-     * @param measurement = actual measured value (used for derivative-on-measurement)
-     * @return control effort (clamped)
-     */
-    float compute(float error, float measurement);
+  // Control
+  float compute(float error, float measurement, float dt);  // preferred
+  float compute(float error, float measurement) {           // convenience (uses fixedDt)
+    return compute(error, measurement, fixedDt);
+  }
 
 private:
-    float Kp, Ki, Kd;
-    float integral = 0;
-    float previousError = 0;
-    float lastMeasurement = 0;
-    float filteredDerivative = 0;
+  // Gains
+  float Kp, Ki, Kd;
 
-    float outputMin = -255;
-    float outputMax = 255;
-    float alpha = 0.1f;
-    float deadband = 0.0f;
+  // Limits
+  float outMin = -255.f, outMax = 255.f;
 
-    bool useDerivativeOnMeasurement = false;
-    bool freezeDWhenSPZero = false;
-    float lastTargetSetpoint = 0;
+  // Internal state
+  float integral = 0.f;
+  float prevError = 0.f;
+  float lastMeasurement = 0.f;
+
+  // Derivative filtering
+  float alpha = 0.1f;               // EMA smoothing factor for D
+  float filtD = 0.f;
+  bool  dOnMeas = true;             // default matches your main.ino call
+
+  // For 2-arg compute()
+  float fixedDt = 0.01f;
 };
+
+#endif

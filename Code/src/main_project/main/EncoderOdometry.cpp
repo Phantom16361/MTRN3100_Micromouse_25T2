@@ -16,11 +16,13 @@
  *             encoder tick deltas. Includes heading wrap.
  *************************************************************/
 
+#include <Arduino.h>
+#include <math.h>
 #include "EncoderOdometry.hpp"
-
 
 volatile long EncoderOdometry::leftTicks = 0;
 volatile long EncoderOdometry::rightTicks = 0;
+
 
 EncoderOdometry::EncoderOdometry() {}
 

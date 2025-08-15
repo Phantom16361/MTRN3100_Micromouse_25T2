@@ -1,3 +1,5 @@
+#include <Arduino.h>
+#include <Wire.h>
 #include "IMUOdometry.hpp"
 
 IMUOdometry::IMUOdometry()
@@ -12,7 +14,7 @@ void IMUOdometry::begin(uint8_t gyroCfg, uint8_t accCfg) {
       Serial.println(st);
       while (1);
     }
-    mpu.calcOffsets();
+    mpu.calcOffsets(); // defaults to calibrating both in most headers
 }
 
 void IMUOdometry::update() {
@@ -22,10 +24,5 @@ void IMUOdometry::update() {
     else if (yawDeg < -180.0f) yawDeg += 360.0f;
 }
 
-float IMUOdometry::getYawDegrees() const {
-    return yawDeg;
-}
-
-float IMUOdometry::getYawRadians() const {
-    return yawDeg * (PI / 180.0f);
-}
+float IMUOdometry::getYawDegrees() const { return yawDeg; }
+float IMUOdometry::getYawRadians() const { return yawDeg * (PI / 180.0f); }

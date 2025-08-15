@@ -85,18 +85,15 @@ void loop() {
   float dt = (now - lastTime) * 0.001f;
   lastTime = now;
 
-  // Update IMU
   imu.update();
   float rawYaw = imu.getYawDegrees();
 
-  // Display current yaw on OLED
   display.clearDisplay();
   display.setCursor(0, 0);
   display.print("Yaw: ");
   display.print(rawYaw, 1);
   display.display();
 
-  // PHASE 1: rough 90° swing
   if (firstMove) {
     float err = wrap180(setpointYaw - rawYaw);
     if (fabs(err) > INIT_TOL) {
@@ -105,33 +102,30 @@ void loop() {
     } else {
       motor.setMotorPWM(0, 0);
       firstMove = false;
-      yawPID.reset(rawYaw);
+      yawPID.reset(rawYaw);          // <-- use new overload to seed lastMeasurement
     }
     return;
   }
 
   // PHASE 2: fine PID correction
   float error = wrap180(setpointYaw - rawYaw);
-  float u     = yawPID.compute(error, dt, rawYaw);
+  float u     = yawPID.compute(error, rawYaw, dt);  // <-- pass dt in the right slot now
   int pwm     = (int)u;
 
-  // One-time recalibration when exactly at setpoint
   if (!didRecalibrate && fabs(error) < DRIFT_DEG) {
-    imu.begin(1, 0);       // re-run offset calibration
+    imu.begin(1, 0);
     delay(100);
     imu.update();
     rawYaw = imu.getYawDegrees();
-    yawPID.reset(rawYaw);
+    yawPID.reset(rawYaw);            // <-- same here
     didRecalibrate = true;
     motor.setMotorPWM(0, 0);
     return;
   }
 
-  // Continuous tiny holds (now large enough to move)
-  if      (pwm > 0 && pwm < MIN_PWM_DEAD)  pwm = MIN_PWM_DEAD;
+  if      (pwm > 0 && pwm < MIN_PWM_DEAD)  pwm =  MIN_PWM_DEAD;
   else if (pwm < 0 && pwm > -MIN_PWM_DEAD) pwm = -MIN_PWM_DEAD;
   pwm = constrain(pwm, -MAX_PWM, MAX_PWM);
 
-  // Drive: -pwm/+pwm → CCW when pwm>0, CW when pwm<0
   motor.setMotorPWM(-pwm, +pwm);
 }

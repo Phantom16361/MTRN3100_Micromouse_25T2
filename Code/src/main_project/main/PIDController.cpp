@@ -1,111 +1,62 @@
-/**************************************************************
- *  File         : PIDController.cpp
- *  Author       : Jason E Tomczyk
- *  Description  : General-purpose velocity PID controller with
- *                 support for deadband, derivative-on-measurement,
- *                 smoothing filter (EMA), and wheel-specific
- *                 factory constructors.
- * 
- *  Version      : 1.0
- *  Created On   : 2025-07-16
- *  Last Updated : 2025-07-16
- * 
- *  Changelog:
- *    - [v1.0] Implemented PID with static Left/Right factory
- *             methods using constants from robot_param.hpp.
- *************************************************************/
-
 #include "PIDController.hpp"
 #include <Arduino.h>
 
 PIDController::PIDController(float kp, float ki, float kd)
-    : Kp(kp), Ki(ki), Kd(kd) {}
+: Kp(kp), Ki(ki), Kd(kd) {}
 
-PIDController PIDController::Left() {
-    PIDController pid(LEFT_VEL_KP, LEFT_VEL_KI, LEFT_VEL_KD);
-    pid.setOutputLimits(PID_OUTPUT_MIN, PID_OUTPUT_MAX);
-    pid.setDerivativeSmoothing(PID_DERIV_SMOOTH);
-    pid.setVelocityDeadband(PID_DEADBAND);
-    pid.enableDerivativeFreezeOnZeroSP(true);
-    pid.setUseDerivativeOnMeasurement(true);
-    return pid;
-}
-
-PIDController PIDController::Right() {
-    PIDController pid(RIGHT_VEL_KP, RIGHT_VEL_KI, RIGHT_VEL_KD);
-    pid.setOutputLimits(PID_OUTPUT_MIN, PID_OUTPUT_MAX);
-    pid.setDerivativeSmoothing(PID_DERIV_SMOOTH);
-    pid.setVelocityDeadband(PID_DEADBAND);
-    pid.enableDerivativeFreezeOnZeroSP(true);
-    pid.setUseDerivativeOnMeasurement(true);
-    return pid;
-}
-
-void PIDController::setGains(float kp, float ki, float kd) {
-    Kp = kp; Ki = ki; Kd = kd;
-}
+void PIDController::setGains(float kp, float ki, float kd) { Kp = kp; Ki = ki; Kd = kd; }
 
 void PIDController::setOutputLimits(float minVal, float maxVal) {
-    outputMin = minVal;
-    outputMax = maxVal;
+  outMin = minVal; outMax = maxVal;
+  if (outMin > outMax) { float t = outMin; outMin = outMax; outMax = t; }
 }
 
 void PIDController::setDerivativeSmoothing(float smoothingAlpha) {
-    alpha = constrain(smoothingAlpha, 0.0f, 1.0f);
+  // clamp 0..1
+  alpha = (smoothingAlpha < 0.f) ? 0.f : (smoothingAlpha > 1.f ? 1.f : smoothingAlpha);
 }
+
+void PIDController::setUseDerivativeOnMeasurement(bool enable) { dOnMeas = enable; }
 
 void PIDController::reset() {
-    integral = 0;
-    previousError = 0;
-    filteredDerivative = 0;
-    lastMeasurement = 0;
+  integral = 0.f;
+  prevError = 0.f;
+  filtD = 0.f;
+  lastMeasurement = 0.f;
 }
 
-void PIDController::enableDerivativeFreezeOnZeroSP(bool enable) {
-    freezeDWhenSPZero = enable;
+void PIDController::reset(float currentMeas) {
+  integral = 0.f;
+  prevError = 0.f;
+  filtD = 0.f;
+  lastMeasurement = currentMeas;
 }
 
-void PIDController::setVelocityDeadband(float threshold) {
-    deadband = threshold;
-}
+float PIDController::compute(float error, float measurement, float dt) {
+  if (dt <= 0.f) return 0.f;
 
-void PIDController::setUseDerivativeOnMeasurement(bool enable) {
-    useDerivativeOnMeasurement = enable;
-}
+  // I term
+  integral += error * dt;
 
-void PIDController::setTargetSetpoint(float sp) {
-    lastTargetSetpoint = sp;
-}
+  // D term (on measurement or error)
+  float rawD;
+  if (dOnMeas) {
+    rawD = (measurement - lastMeasurement) / dt;
+    lastMeasurement = measurement;
+  } else {
+    rawD = (error - prevError) / dt;
+    prevError = error;
+  }
 
-// @param CONTROL_DT = time delta in seconds
-float PIDController::compute(float error, float measurement) {
-    if (CONTROL_DT <= 0.0f) return 0;
+  // EMA smoothing on D
+  filtD = alpha * rawD + (1.f - alpha) * filtD;
 
-    if (abs(error) < deadband) {
-        error = 0.0f;
-    }
+  // PID sum (note: D on measurement subtracts Kd*d(meas)/dt, equivalent to -Kd * filtD)
+  float u = Kp * error + Ki * integral - Kd * filtD;
 
-    integral += error * CONTROL_DT;
+  // Clamp
+  if (u > outMax) u = outMax;
+  else if (u < outMin) u = outMin;
 
-    float rawDerivative;
-    if (useDerivativeOnMeasurement) {
-        rawDerivative = (measurement - lastMeasurement) / CONTROL_DT;
-        lastMeasurement = measurement;
-    } else {
-        rawDerivative = (error - previousError) / CONTROL_DT;
-        previousError = error;
-    }
-
-    if (freezeDWhenSPZero && abs(lastTargetSetpoint) < 1.0f) {
-        filteredDerivative = 0.0f;
-    } else {
-        filteredDerivative = alpha * rawDerivative + (1.0f - alpha) * filteredDerivative;
-    }
-
-    float output = Kp * error + Ki * integral - Kd * filteredDerivative;
-
-    if (output > outputMax) output = outputMax;
-    else if (output < outputMin) output = outputMin;
-
-    return output;
+  return u;
 }
