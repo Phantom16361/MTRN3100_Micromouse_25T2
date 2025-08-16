@@ -69,11 +69,11 @@
 // ========== Position PID Values ==========
 #define LEFT_POS_KP 1.10f
 #define LEFT_POS_KI 0.30f
-#define LEFT_POS_KD 0.05f
+#define LEFT_POS_KD 0.10f
 
 #define RIGHT_POS_KP 1.10f
 #define RIGHT_POS_KI 0.30f
-#define RIGHT_POS_KD 0.05f
+#define RIGHT_POS_KD 0.10f
 
 
 
