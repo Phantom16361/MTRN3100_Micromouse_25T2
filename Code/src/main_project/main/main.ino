@@ -1,288 +1,399 @@
-/***** main.ino : VL6180X L/F/R wall-centering + OLED, ISR-friendly (repulsive when too close) *****/
+// ==== main.ino: Forward-one-cell (VL6180X L/F/R) + encoder 90° turns ====
+// Goal: go straight. Heading PI is primary; walls apply gentle nudges only.
+// - Remembers corridor offset at cell entry and maintains it.
+// - Large deadband + confirmation + LPF + slew for calm behavior.
+// - Adaptive blend: more wall influence when near a wall or when off-center.
+// - Single-wall standoff so it corrects away when only one wall is seen.
+// - No IMU. No motor PWM trims.
+
 #include <Arduino.h>
-#include <Wire.h>
+#include <math.h>
+#include <ctype.h>
 
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 32
-#define OLED_RESET    -1
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-
-// OLED timing
-static const uint32_t OLED_DT_US = 100000; // 10 Hz
-static uint32_t t_next_oled = 0;
-
-#include "Lidar.hpp"
+#include "EncoderOdometry.hpp"
 #include "MotorController.hpp"
+#include "Lidar.hpp"
 
-// ------------------ VL6180X semantics ------------------
-static const int MAX_VALID_MM      = 200;  // sensor max
-static const int INVALID_CODE      = -2;   // from Lidar::readDistance()
-// ------------------------------------------------------
+#ifndef M_PI
+  #define M_PI 3.14159265358979323846
+#endif
 
-// ---------------------- Tunables ----------------------
-static const int   BASE_FWD_PWM         = 110;  // cruise
-static const int   MAX_PWM              = 230;
-static const int   MAX_TURN_PWM         = 40;   // cap steering authority
-static const int   TURN_SLEW_PER_CYCLE  = 6;    // limit d(turn)/cycle (PWM counts)
-static const float SIDE_ALPHA           = 0.45; // EMA when valid (0..1)
-static const uint32_t HOLD_INVALID_US   = 100000; // keep last valid for 100 ms
-// Corridor behavior
-static const int   DESIRED_SIDE_MM      = 65;  // aim distance to wall (used when not "too close")
-static const int   TOO_CLOSE_MM         = 40;  // repulsion threshold
-static const float PUSH_K               = 1.05f; // extra gain for push-away when too close
-// Front gating (all < 200)
+/* ========================= Maze / Drive Constants ========================= */
+
+static const float CELL_SIZE_MM         = 175.0f;   // one maze cell
+static const float FORWARD_CELL_SCALE   = 1.03f;    // fine-tune forward distance
+static const float BRAKE_ZONE_MM        = 25.0f;    // taper near end
+
+static const float TURN_RAD             = M_PI / 2.0f; // 90°
+
+// 90° turn scalars
+static const float ANGLE_SCALE_LEFT     = 1.00f;
+static const float ANGLE_SCALE_RIGHT    = 1.00f;
+
+// Speeds
+static const int   PWM_DRIVE            = 150;
+static const int   PWM_TURN             = 130;
+
+// Motor calibration (no trim)
+static const float LEFT_PWM_SCALE       = 1.00f;
+static const float RIGHT_PWM_SCALE      = 1.00f;
+
+/* ====================== Sensors / Timing ====================== */
+
+static const int   MAX_VALID_MM         = 200;
+
+static const uint32_t CTRL_DT_US        = 5000;    // 200 Hz control
+static const uint32_t LIDAR_DT_US       = 20000;   // ~50 Hz per sensor
+static const float    DT_SEC            = CTRL_DT_US * 1e-6f;
+
+static const float SIDE_ALPHA           = 0.50f;   // EMA for raw distance
+static const uint32_t HOLD_INVALID_US   = 100000;  // keep last valid 100 ms
+
+/* ====================== Corridor logic (gentle) ====================== */
+
+// A side is "present" only if closer than this
+static const int   SIDE_PRESENT_MM      = 140;
+
+// Push-away if really close (cap the push)
+static const int   TOO_CLOSE_MM         = 40;
+static const int   REPULSE_MAX_PWM      = 14;
+
+// Target lateral balance: use corridor difference (dR - dL)
+static const int   CENTER_DEADBAND_MM   = 14;      // big deadband
+static const int   CENTER_CONFIRM_CYCLES= 4;       // must persist
+static const uint32_t FRESH_WINDOW_US   = 50000;   // both sides fresh
+
+// Very light wall centering gain (mm -> PWM)
+static const float SIDE_KP              = 0.10f;   // small on purpose
+static const float CORR_LPF_ALPHA       = 0.20f;   // smooth target
+static const int   STEER_MAX_PWM        = 20;      // absolute cap
+static const float CORR_FRAC_OF_BASE    = 0.20f;   // also limit vs base
+static const int   TURN_SLEW_PER_CYCLE  = 3;       // slow ramp
+static const int   SIDE_SLOW_BASE       = 90;      // optional base cap on repulsion
+
+// === NEW: Single-wall standoff control ===
+static const int   SINGLE_NEAR_MM       = 90;      // start correcting if closer than this
+static const int   SINGLE_TARGET_MM     = 70;      // desired distance from that wall
+static const int   SINGLE_DEADBAND_MM   = 6;
+static const float SINGLE_KP            = 0.14f;   // single-wall proportional gain
+
+/* ====================== Heading hold (primary) ====================== */
+// Encoder-only PI that keeps heading ~0 during the cell
+static const float HEADING_KP_RAD       = 95.0f;   // ~1.7 PWM/deg
+static const float HEADING_KI_RAD       = 35.0f;   // PWM/(rad·s)
+static const int   HEADING_I_MAX        = 10;      // integral clamp
+static const int   HEADING_MAX_PWM      = 22;      // absolute cap
+
+/* ====================== Front gating (gentle) ====================== */
+#define  FRONT_SLOW_ENABLE   1
+#define  FRONT_STOP_ENABLE   0
 static const int   FRONT_SLOW_MM        = 170;
-static const int   FRONT_STOP_MM        = 120;
-// Optional: slow down when a side is too close
-static const int   SIDE_SLOW_BASE       = 80;   // forward PWM cap while pushing away
-// ------------------------------------------------------
+static const int   FRONT_STOP_MM        = 110;
+static const int   FRONT_MIN_BASE_PWM   = 60;      // don’t stall while slowing
 
-// ------------------- Timing (no delay) ----------------
-static const uint32_t CTRL_DT_US        = 5000;   // 200 Hz control
-static const uint32_t LIDAR_DT_US       = 20000;  // ~50 Hz per sensor (staggered)
-uint32_t t_next_ctrl = 0;
-uint32_t t_next_lidar = 0;
-int lidar_round_robin = 0; // 0=LEFT,1=FRONT,2=RIGHT
-// ------------------------------------------------------
+/* ============================ Globals ============================ */
 
-// Logical indices to match your wiring
-enum { LIDAR_LEFT=0, LIDAR_FRONT=1, LIDAR_RIGHT=2 };
+EncoderOdometry odom;
+MotorController motor;
+Lidar           lidar;
 
-MotorController motors;
-Lidar lidar;
+static inline int   clampInt(int v, int lo, int hi){ return v<lo?lo : v>hi?hi : v; }
+static inline float clampF (float v, float lo, float hi){ return v<lo?lo : v>hi?hi : v; }
+static float wrap180rad(float a){ while(a>M_PI) a-=2.f*M_PI; while(a<=-M_PI) a+=2.f*M_PI; return a; }
 
-// Smoothed readings + timestamps
-struct Side {
-  float  mm = MAX_VALID_MM;  // smoothed value
-  bool   valid = false;      // last raw validity
-  uint32_t t_last_valid = 0; // micros of last valid update
-} side[3];
+struct SideState {
+  float    mm = MAX_VALID_MM;
+  bool     valid = false;
+  uint32_t t_last_valid = 0;
+};
+static SideState side[3]; // 0=LEFT, 1=FRONT, 2=RIGHT
 
-// State
-float turn_cmd = 0.0f;  // signed PWM delta
-
-// --------------- Helpers ---------------
-static inline int clampInt(int v, int lo, int hi){ return v<lo?lo : v>hi?hi : v; }
-static inline float clamp(float v, float lo, float hi){ return v<lo?lo : v>hi?hi : v; }
-
-// --------------- VL6180X polling (staggered) ---------------
-void update_one_lidar(int which) {
-  int raw = lidar.readDistance((LidarPosition)which);
-
+static void update_one_lidar(int which){
+  LidarPosition pos = (which==0)?LEFT:(which==1)?FRONT:RIGHT;
+  int raw = lidar.readDistance(pos);
   uint32_t now = micros();
-  if (raw >= 0 && raw <= MAX_VALID_MM) {
-    // Valid: EMA toward raw
+  if (raw>=0 && raw<=MAX_VALID_MM){
     side[which].mm += SIDE_ALPHA * (raw - side[which].mm);
     side[which].valid = true;
     side[which].t_last_valid = now;
   } else {
-    // Invalid: hold last valid briefly, then relax to sensor max
     side[which].valid = false;
-    if (now - side[which].t_last_valid > HOLD_INVALID_US) {
+    if (now - side[which].t_last_valid > HOLD_INVALID_US){
       side[which].mm += 0.15f * (MAX_VALID_MM - side[which].mm);
     }
   }
 }
 
-// --------------- OLED UI ---------------
-void oledBegin() {
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) return;
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0,0);
-  display.println(F("VL6180X L/F/R"));
-  display.display();
-}
+/* ========================= Forward One Cell ========================= */
 
-static inline void printCell(const char *label, int mm, bool valid, bool too_close){
-  display.print(label); display.print(':');
-  if (!valid) display.print(F("--"));
-  else {
-    if (mm < 0) mm = 0;
-    if (mm > 999) mm = 999;
-    display.print(mm);
-    if (too_close) display.print('!');
-  }
-  display.print(' ');
-}
+void forwardOneCell(int pwm = PWM_DRIVE){
+  const float target_mm = CELL_SIZE_MM * FORWARD_CELL_SCALE;
+  odom.reset();
 
-void oledUpdate(float dL, bool vL, float dF, bool vF, float dR, bool vR,
-                int TOO_CLOSE_MM, int base_pwm, int turn_pwm)
-{
-  uint32_t now = micros();
-  if ((int32_t)(now - t_next_oled) < 0) return; // non-blocking 10 Hz
-  t_next_oled = now + OLED_DT_US;
-
-  int iL = (int)(dL + 0.5f);
-  int iF = (int)(dF + 0.5f);
-  int iR = (int)(dR + 0.5f);
-
-  bool cL = vL && (iL < TOO_CLOSE_MM);
-  bool cF = vF && (iF < TOO_CLOSE_MM);
-  bool cR = vR && (iR < TOO_CLOSE_MM);
-
-  display.clearDisplay();
-
-  // Row 0: header + PWM/turn
-  display.setCursor(0, 0);
-  display.print(F("L   F   R"));
-  display.setCursor(70, 0);
-  display.print(F("PWM "));
-  display.print(base_pwm);
-  display.print('/');
-  display.print(turn_pwm);
-
-  // Row 1: values
-  display.setCursor(0, 12);
-  printCell("L", iL, vL, cL);
-  printCell("F", iF, vF, cF);
-  printCell("R", iR, vR, cR);
-
-  // Row 2: legend
-  display.setCursor(0, 24);
-  display.print(F("--=no ret  !=<thr"));
-
-  display.display();
-}
-
-// --------------- Arduino lifecycle ---------------
-void setup() {
-  Serial.begin(115200);
-  Wire.begin();
-  motors.begin();
-  lidar.begin();
-
-  oledBegin();
-  t_next_oled = micros();  // start OLED timer
-
-  // Prime readings
-  for (int i=0;i<3;i++) {
-    int r = lidar.readDistance((LidarPosition)i);
-    side[i].mm = (r>=0 && r<=MAX_VALID_MM) ? r : MAX_VALID_MM;
+  // Prime smoothing
+  for (int i=0;i<3;i++){
+    LidarPosition pos = (i==0)?LEFT:(i==1)?FRONT:RIGHT;
+    int r = lidar.readDistance(pos);
+    side[i].mm    = (r>=0 && r<=MAX_VALID_MM) ? (float)r : (float)MAX_VALID_MM;
     side[i].valid = (r>=0 && r<=MAX_VALID_MM);
     side[i].t_last_valid = micros();
   }
 
-  t_next_ctrl = micros();
-  t_next_lidar = micros();
-}
-
-void loop() {
-  uint32_t now = micros();
-
-  // --- Staggered lidar updates (one sensor per pass) ---
-  if ((int32_t)(now - t_next_lidar) >= 0) {
-    update_one_lidar(lidar_round_robin);
-    lidar_round_robin = (lidar_round_robin + 1) % 3;
-    t_next_lidar += LIDAR_DT_US;
-  }
-
-  // --- Control loop at fixed rate, no delay() ---
-  if ((int32_t)(now - t_next_ctrl) >= 0) {
-    // Distances (smoothed)
-    float dL = side[LIDAR_LEFT].mm;
-    float dF = side[LIDAR_FRONT].mm;
-    float dR = side[LIDAR_RIGHT].mm;
-
-    // Valid if raw-valid OR recently valid (hold window)
-    bool vL = side[LIDAR_LEFT].valid  || (now - side[LIDAR_LEFT].t_last_valid  <= HOLD_INVALID_US);
-    bool vF = side[LIDAR_FRONT].valid || (now - side[LIDAR_FRONT].t_last_valid <= HOLD_INVALID_US);
-    bool vR = side[LIDAR_RIGHT].valid || (now - side[LIDAR_RIGHT].t_last_valid <= HOLD_INVALID_US);
-
-    // --- Base forward speed from front clearance ---
-    int base = BASE_FWD_PWM;
-    if (dF < FRONT_SLOW_MM && vF) {
-      if (dF <= FRONT_STOP_MM) base = 0;
-      else {
-        float frac = (dF - FRONT_STOP_MM) / float(FRONT_SLOW_MM - FRONT_STOP_MM);
-        base = int(BASE_FWD_PWM * clamp(frac, 0.0f, 1.0f));
-      }
-    }
-
-    // ------------- REPULSIVE LOGIC WHEN TOO CLOSE -------------
-    // If a wall is closer than TOO_CLOSE_MM on a side, override and steer away.
-    bool closeL = vL && (dL <= TOO_CLOSE_MM);
-    bool closeR = vR && (dR <= TOO_CLOSE_MM);
-
-    float err = 0.0f; // mm-equivalent driving the steering
-
-    if (closeL ^ closeR) {
-      // Exactly one side is too close -> push away from that side
-      if (closeL) {
-        // left too close -> steer right (negative err -> leftPWM > rightPWM)
-        err = -PUSH_K * (TOO_CLOSE_MM - dL);
-      } else {
-        // right too close -> steer left (positive err -> rightPWM > leftPWM)
-        err = +PUSH_K * (TOO_CLOSE_MM - dR);
-      }
-      // Optional: slow down while pushing away
-      base = min(base, SIDE_SLOW_BASE);
-
-    } else if (closeL && closeR) {
-      // Both sides too close: bias toward the side with more clearance
-      // (positive err => turn left if right is tighter, negative => turn right if left is tighter)
-      float diff = (dL - dR); // if dR < dL -> diff>0 -> steer left, away from right
-      err = PUSH_K * diff;
-      base = min(base, SIDE_SLOW_BASE);
-
+  // Corridor baseline (remember offset at entry so we don’t chase a wall)
+  float baselineDiff = 0.0f; // desired (dR - dL)
+  {
+    bool leftPresent  = (side[0].valid && side[0].mm < SIDE_PRESENT_MM);
+    bool rightPresent = (side[2].valid && side[2].mm < SIDE_PRESENT_MM);
+    if (leftPresent && rightPresent) {
+      baselineDiff = side[2].mm - side[0].mm; // keep this difference through the cell
     } else {
-      // ------------- NORMAL FOLLOW/CENTERING when not "too close" -------------
-      if (vL && vR) {
-        // Centering: steer based on L-R difference (positive => away from right wall)
-        err = (dL - dR);
-      } else if (vL) {
-        // Left-wall follow around setpoint
-        err = (DESIRED_SIDE_MM - dL);
-      } else if (vR) {
-        // Right-wall follow around setpoint
-        err = (dR - DESIRED_SIDE_MM);
-      } else {
-        err = 0.0f; // no info, go straight
-      }
+      baselineDiff = 0.0f;
     }
-
-    // Proportional steering (units: PWM counts)
-    const float KP = 0.35f; // tune as needed
-    float turn_target = clamp(KP * err, -float(MAX_TURN_PWM), +float(MAX_TURN_PWM));
-
-    // Slew-limit turn to avoid "keeps turning" tails
-    float dturn = turn_target - turn_cmd;
-    if (dturn >  TURN_SLEW_PER_CYCLE) dturn =  TURN_SLEW_PER_CYCLE;
-    if (dturn < -TURN_SLEW_PER_CYCLE) dturn = -TURN_SLEW_PER_CYCLE;
-    turn_cmd += dturn;
-
-    // Compose wheel PWMs (diff drive)
-    int leftPWM  = clampInt(base - int(turn_cmd), 0, MAX_PWM);
-    int rightPWM = clampInt(base + int(turn_cmd), 0, MAX_PWM);
-
-    // Hard stop if really close in front
-    if (vF && dF <= FRONT_STOP_MM) { leftPWM = 0; rightPWM = 0; turn_cmd = 0; }
-
-    motors.setMotorPWM(leftPWM, rightPWM);
-
-    // OLED update now that base/turn are known
-    oledUpdate(dL, vL, dF, vF, dR, vR, TOO_CLOSE_MM, base, (int)turn_cmd);
-
-    // Light-weight debug (10 Hz)
-    static uint32_t t_dbg = 0;
-    if (now - t_dbg > 100000) {
-      t_dbg = now;
-      Serial.print("L/F/R: ");
-      Serial.print((int)dL); Serial.print('/');
-      Serial.print((int)dF); Serial.print('/');
-      Serial.print((int)dR);
-      Serial.print("  close L/R: ");
-      Serial.print(closeL); Serial.print('/'); Serial.print(closeR);
-      Serial.print("  base: "); Serial.print(base);
-      Serial.print("  err: "); Serial.print(err, 1);
-      Serial.print("  turn: "); Serial.println(turn_cmd, 1);
-    }
-
-    t_next_ctrl += CTRL_DT_US; // fixed cadence
   }
 
-  // Nothing blocking here; ISR for encoders stays responsive.
+  uint32_t t_next_ctrl  = micros();
+  uint32_t t_next_lidar = micros();
+  int rr = 0;
+
+  float corrFilt = 0.0f;      // filtered correction target (PWM)
+  float turn_cmd = 0.0f;      // post-slew PWM
+  int   persist  = 0;         // confirmation counter
+
+  // Heading PI
+  float headI = 0.0f;
+
+  while (true){
+    uint32_t now = micros();
+
+    // Stagger sensor reads
+    if ((int32_t)(now - t_next_lidar) >= 0) {
+      update_one_lidar(rr);
+      rr = (rr + 1) % 3;
+      t_next_lidar += LIDAR_DT_US;
+    }
+
+    if ((int32_t)(now - t_next_ctrl) >= 0) {
+      float dL = side[0].mm, dF = side[1].mm, dR = side[2].mm;
+      bool  vL = side[0].valid || (now - side[0].t_last_valid <= HOLD_INVALID_US);
+      bool  vF = side[1].valid || (now - side[1].t_last_valid <= HOLD_INVALID_US);
+      bool  vR = side[2].valid || (now - side[2].t_last_valid <= HOLD_INVALID_US);
+
+      // Base forward speed with gentle front slow-down
+      int base = pwm;
+      #if FRONT_SLOW_ENABLE
+        if (vF && dF < FRONT_SLOW_MM){
+          float frac = (dF - (float)FRONT_STOP_MM) / (float)(FRONT_SLOW_MM - FRONT_STOP_MM);
+          float min_frac = FRONT_STOP_ENABLE ? 0.0f : min((float)FRONT_MIN_BASE_PWM/(float)pwm, 1.0f);
+          frac = clampF(frac, min_frac, 1.0f);
+          base = (int)(pwm * frac);
+        }
+      #endif
+      #if FRONT_STOP_ENABLE
+        if (vF && dF <= FRONT_STOP_MM){ base = 0; turn_cmd = 0; }
+      #endif
+
+      // Distance & heading
+      odom.update();
+      float x = odom.getX(), y = odom.getY();
+      float dist  = sqrtf(x*x + y*y);
+      float theta = wrap180rad(odom.getTheta()); // +CCW from this segment start
+
+      // Taper near the cell end
+      if (target_mm - dist <= BRAKE_ZONE_MM){
+        float frac = clampF((target_mm - dist) / BRAKE_ZONE_MM, 0.25f, 1.0f);
+        base = (int)(base * frac);
+      }
+
+      // --- Heading PI (primary) ---
+      // Positive theta (CCW/left) must steer RIGHT (positive turn_cmd)
+      float eHead = +theta;  // want heading ~0 through the cell
+      // Integrate softly; leak when large or near walls to avoid fighting wall terms
+      bool nearAnyWall = (vL && dL < SINGLE_NEAR_MM) || (vR && dR < SINGLE_NEAR_MM);
+      if (!nearAnyWall && fabsf(eHead) < 0.35f) {
+        headI += HEADING_KI_RAD * eHead * DT_SEC;
+        headI = clampF(headI, -float(HEADING_I_MAX), +float(HEADING_I_MAX));
+      } else {
+        headI *= 0.85f; // leak integral near walls or large heading error
+      }
+      int headPWM = (int)clampF(HEADING_KP_RAD * eHead + headI,
+                                -float(HEADING_MAX_PWM), +float(HEADING_MAX_PWM));
+
+      // --- Wall correction (secondary) ---
+      const bool leftFresh  = (now - side[0].t_last_valid) <= FRESH_WINDOW_US;
+      const bool rightFresh = (now - side[2].t_last_valid) <= FRESH_WINDOW_US;
+
+      const bool leftPresent  = vL && (dL < SIDE_PRESENT_MM)  && leftFresh;
+      const bool rightPresent = vR && (dR < SIDE_PRESENT_MM)  && rightFresh;
+
+      int wallPWM = 0;
+
+      // 1) Repulsion if truly close (tiny cap) — strongest priority
+      const bool leftClose  = leftPresent  && (dL <= TOO_CLOSE_MM);
+      const bool rightClose = rightPresent && (dR <= TOO_CLOSE_MM);
+      if (leftClose ^ rightClose){
+        wallPWM = leftClose ? +min(REPULSE_MAX_PWM, (int)(TOO_CLOSE_MM - dL))
+                            : -min(REPULSE_MAX_PWM, (int)(TOO_CLOSE_MM - dR));
+        base = min(base, SIDE_SLOW_BASE);
+        persist = 0;
+      }
+      // 2) Both walls present: center about baseline difference (calm + confirmed)
+      else if (leftPresent && rightPresent) {
+        float diff = (dR - dL) - baselineDiff; // + => closer to left than baseline
+        if (fabsf(diff) > (float)CENTER_DEADBAND_MM) {
+          if (++persist >= CENTER_CONFIRM_CYCLES) {
+            wallPWM = (int)(SIDE_KP * diff);  // small & calm
+          }
+        } else {
+          persist = 0;
+        }
+      }
+      // 3) Single wall present: hold a gentle standoff if you're getting close
+      else if (leftPresent ^ rightPresent) {
+        persist = 0;
+        if (leftPresent && dL < SINGLE_NEAR_MM) {
+          float e = (float)SINGLE_TARGET_MM - dL; // + if too close to left
+          if (fabsf(e) > (float)SINGLE_DEADBAND_MM) {
+            wallPWM = (int)(SINGLE_KP * e); // + => steer right (away from left)
+          }
+        } else if (rightPresent && dR < SINGLE_NEAR_MM) {
+          float e = dR - (float)SINGLE_TARGET_MM; // - if too close to right
+          if (fabsf(e) > (float)SINGLE_DEADBAND_MM) {
+            wallPWM = (int)(SINGLE_KP * e); // - => steer left (away from right)
+          }
+        }
+      } else {
+        // No reliable walls -> rely on heading only
+        persist = 0;
+      }
+
+      // --- Adaptive blending (how much we trust walls vs heading) ---
+      // Start mostly heading; increase wall weight when needed.
+      float wHead = 0.80f; // default: lean on heading
+      bool bothWalls = leftPresent && rightPresent;
+      if (bothWalls) {
+        wHead = 0.75f;
+        float diff = fabsf((dR - dL) - baselineDiff);
+        if (diff > (float)CENTER_DEADBAND_MM) wHead = 0.60f;   // off-center -> more wall help
+      }
+      if (leftClose || rightClose)       wHead = 0.35f;        // very close -> trust walls more
+      else if ((leftPresent && dL < SINGLE_NEAR_MM) ||
+               (rightPresent && dR < SINGLE_NEAR_MM)) wHead = 0.55f; // single-wall near
+
+      // Combine
+      float corrTarget = wHead * (float)headPWM + (1.0f - wHead) * (float)wallPWM;
+
+      // LPF and clamp (also bound to fraction of current base)
+      corrFilt += CORR_LPF_ALPHA * (corrTarget - corrFilt);
+      int corrLimit = min(STEER_MAX_PWM, (int)(base * CORR_FRAC_OF_BASE));
+      int turn_target = clampInt((int)lrintf(corrFilt), -corrLimit, +corrLimit);
+
+      // Guardrail — never steer TOWARD a close/near wall
+      if (bothWalls) {
+        if (dL + 8 < dR && turn_target < 0) turn_target = 0; // nearer LEFT, forbid left steer
+        if (dR + 8 < dL && turn_target > 0) turn_target = 0; // nearer RIGHT, forbid right steer
+      } else {
+        if (leftPresent  && dL < SINGLE_NEAR_MM && turn_target < 0) turn_target = 0;
+        if (rightPresent && dR < SINGLE_NEAR_MM && turn_target > 0) turn_target = 0;
+      }
+
+      // Slew-limit
+      int dturn = turn_target - (int)turn_cmd;
+      if (dturn >  TURN_SLEW_PER_CYCLE) dturn =  TURN_SLEW_PER_CYCLE;
+      if (dturn < -TURN_SLEW_PER_CYCLE) dturn = -TURN_SLEW_PER_CYCLE;
+      turn_cmd += dturn;
+
+      // +turn_cmd => steer RIGHT (left faster, right slower)
+      int leftPWM  = clampInt((int)((base + turn_cmd) * LEFT_PWM_SCALE),  0, 255);
+      int rightPWM = clampInt((int)((base - turn_cmd) * RIGHT_PWM_SCALE), 0, 255);
+      motor.setMotorPWM(leftPWM, rightPWM);
+
+      if (dist >= target_mm) break;
+      t_next_ctrl += CTRL_DT_US;
+    }
+
+    delayMicroseconds(200);
+  }
+
+  motor.setMotorPWM(0,0);
 }
+
+/* ============================ Turn Primitives ============================ */
+
+static const float TURN_STOP_RAD   = 0.03f;  // ~1.7°
+static const float TURN_SLOW_RAD   = 0.42f;  // taper near target
+static const int   PWM_MIN_TURN    = 18;
+
+void turnLeft(int pwm_max = PWM_TURN){
+  const float target = +TURN_RAD * ANGLE_SCALE_LEFT;
+  odom.reset();
+  for(;;){
+    odom.update();
+    float th = wrap180rad(odom.getTheta());
+    float err = wrap180rad(target - th);
+    if (fabsf(err) <= TURN_STOP_RAD) break;
+    float scale = (fabsf(err) >= TURN_SLOW_RAD) ? 1.f : (fabsf(err)/TURN_SLOW_RAD);
+    int pwm = PWM_MIN_TURN + (int)((pwm_max - PWM_MIN_TURN) * scale);
+    int dir = (err > 0) ? +1 : -1;
+    motor.setMotorPWM((int)(-dir * pwm * LEFT_PWM_SCALE),
+                      (int)( dir * pwm * RIGHT_PWM_SCALE));
+    delay(3);
+  }
+  motor.setMotorPWM(0,0);
+}
+
+void turnRight(int pwm_max = PWM_TURN){
+  const float target = -TURN_RAD * ANGLE_SCALE_RIGHT;
+  odom.reset();
+  for(;;){
+    odom.update();
+    float th = wrap180rad(odom.getTheta());
+    float err = wrap180rad(target - th);
+    if (fabsf(err) <= TURN_STOP_RAD) break;
+    float scale = (fabsf(err) >= TURN_SLOW_RAD) ? 1.f : (fabsf(err)/TURN_SLOW_RAD);
+    int pwm = PWM_MIN_TURN + (int)((pwm_max - PWM_MIN_TURN) * scale);
+    int dir = (err > 0) ? +1 : -1;
+    motor.setMotorPWM((int)(-dir * pwm * LEFT_PWM_SCALE),
+                      (int)( dir * pwm * RIGHT_PWM_SCALE));
+    delay(3);
+  }
+  motor.setMotorPWM(0,0);
+}
+
+/* ============================= Command Runner ============================= */
+
+static void executeCommands(const char *cmds){
+  for (int i=0; cmds[i]!='\0'; ++i){
+    char c = tolower(cmds[i]);
+    switch(c){
+      case 'f': forwardOneCell(); break;
+      case 'l': turnLeft();       break;
+      case 'r': turnRight();      break;
+      default: break;
+    }
+    delay(160);
+  }
+}
+
+/* ================================= Setup ================================= */
+
+void setup(){
+  odom.begin();
+  motor.begin();
+  lidar.begin();
+
+  // Prime smoothing
+  for (int i=0;i<3;i++){
+    LidarPosition pos = (i==0)?LEFT:(i==1)?FRONT:RIGHT;
+    int r = lidar.readDistance(pos);
+    side[i].mm    = (r>=0 && r<=MAX_VALID_MM) ? (float)r : (float)MAX_VALID_MM;
+    side[i].valid = (r>=0 && r<=MAX_VALID_MM);
+    side[i].t_last_valid = micros();
+  }
+
+  // Example path
+  executeCommands("fffflfrflflffrflf");
+
+  motor.setMotorPWM(0,0);
+}
+
+void loop(){}
